@@ -1,0 +1,29 @@
+# Entorno y cachés
+.venv/
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Secretos locales
+.env
+
+# Datos (ignorar todo, preservar placeholders)
+data/*
+!data/raw/
+!data/processed/
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Resultados y modelos
+results/
+models/
+*.pkl
+*.joblib
+*.h5
+*.pt
+*.onnx
+
+# OS/editor
+.DS_Store
+.idea/
+.vscode/
