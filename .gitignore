@@ -7,12 +7,17 @@ __pycache__/
 # Secretos locales
 .env
 
-# Datos (ignorar todo, preservar placeholders)
+# Datos (ignorar todo, preservar placeholders). Los parquet de ALeRCE no van al repo.
 data/*
 !data/raw/
 !data/processed/
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+*.parquet
 
 # Resultados y modelos
 results/
