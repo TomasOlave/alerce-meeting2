@@ -18,7 +18,7 @@ class Autoencoder(nn.Module):
     """MLP in → 512 → 256 → 128 → z → 128 → 256 → 512 → in, como AnomalyALeRCE.
 
     La salida es lineal. El autoencoder del paper termina en tanh porque sus
-    features quedan en [-1, 1]; aquí el escalado es robusto y no está acotado.
+    features quedan en [-1, 1]; aquí el escalado es z-score y no está acotado.
     """
 
     def __init__(self, in_dim: int, z_dim: int = 8) -> None:

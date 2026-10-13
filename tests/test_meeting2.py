@@ -24,7 +24,9 @@ def test_oids_no_se_comparten_y_la_escala_sale_de_train() -> None:
     assert train.isdisjoint(val)
     assert train.isdisjoint(test)
     assert val.isdisjoint(test)
-    assert np.allclose(np.median(conjuntos["x_train"], axis=0), 0, atol=1e-5)
+    assert np.allclose(conjuntos["x_train"].mean(axis=0), 0, atol=1e-5)
+    desviacion = conjuntos["x_train"].std(axis=0)
+    assert np.allclose(desviacion[desviacion > 0], 1, atol=1e-4)
 
 
 def test_las_columnas_log_se_eligen_solo_con_train() -> None:

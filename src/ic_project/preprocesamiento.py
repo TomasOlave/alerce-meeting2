@@ -75,11 +75,17 @@ def aplicar_transformaciones_elemento(
 
 @dataclass
 class Preprocesador:
-    """Winsorización, imputación mediana y escala robusta, todas aprendidas en train."""
+    """Winsorización, imputación mediana y z-score, todos aprendidos en train.
+
+    La escala es la desviación estándar y no el IQR: con IQR las features de cola
+    pesada (Harmonics_mag_*, delta_period_*) quedaban con valores de cientos y se
+    llevaban casi todo el MSE del autoencoder.
+    """
 
     cuantiles_inf_: pd.Series = field(default=None, repr=False)
     cuantiles_sup_: pd.Series = field(default=None, repr=False)
     mediana_: pd.Series = field(default=None, repr=False)
+    media_: pd.Series = field(default=None, repr=False)
     escala_: pd.Series = field(default=None, repr=False)
     columnas_: list[str] = field(default_factory=list)
 
@@ -89,18 +95,10 @@ class Preprocesador:
         self.cuantiles_sup_ = x_train.quantile(0.99)
         recortado = self._recortar(x_train)
         self.mediana_ = recortado.median()
-        iqr = recortado.quantile(0.75) - recortado.quantile(0.25)
-        rango_p90 = recortado.quantile(0.95) - recortado.quantile(0.05)
-        rango_total = recortado.max() - recortado.min()
-        escala = iqr.copy()
-        for c in recortado.columns:
-            referencia = max(abs(float(self.mediana_[c])), float(rango_total[c]), 1e-12)
-            if float(iqr[c]) <= 1e-6 * referencia:
-                rango90 = float(rango_p90[c])
-                rango = float(rango_total[c])
-                alternativa = rango90 if rango90 > 1e-6 * referencia else rango
-                escala[c] = alternativa if alternativa > 0 else 1.0
-        self.escala_ = escala.replace(0, 1.0)
+        imputado = recortado.fillna(self.mediana_)
+        self.media_ = imputado.mean()
+        # una columna constante queda en 0 en vez de dividir por 0
+        self.escala_ = imputado.std(ddof=0).replace(0, 1.0)
         return self
 
     def _recortar(self, x: pd.DataFrame) -> pd.DataFrame:
@@ -112,7 +110,7 @@ class Preprocesador:
         x = x[self.columnas_]
         recortado = self._recortar(x)
         imputado = recortado.fillna(self.mediana_)
-        return (imputado - self.mediana_) / self.escala_
+        return (imputado - self.media_) / self.escala_
 
 
 def particionar(
