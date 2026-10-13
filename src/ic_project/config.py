@@ -28,6 +28,15 @@ COLORES_CLASE = {
 }
 
 COLUMNAS_PERIODO = ("Period_band_g", "Period_band_r", "Multiband_period_g_r")
+COLUMNAS_COLOR = (
+    "g-r_mean_g_r",
+    "g-r_mean_corr_g_r",
+    "g-r_max_g_r",
+    "g-r_max_corr_g_r",
+)
+# Estas 7 son las que entran al autoencoder. Con las 158 el cuello mezcla las
+# clases (silhouette ~ -0.2). Periodo y color g-r son las que las separan.
+COLUMNAS_MODELO = COLUMNAS_PERIODO + COLUMNAS_COLOR
 COLUMNAS_ARCSINH = ("MHPS_ratio_g", "MHPS_ratio_r")
 COLUMNAS_MAGNITUD_LC = (
     "magpsf_corr",

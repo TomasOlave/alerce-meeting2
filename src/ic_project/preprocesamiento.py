@@ -10,6 +10,7 @@ from sklearn.model_selection import train_test_split
 
 from ic_project.config import (
     COLUMNAS_ARCSINH,
+    COLUMNAS_MODELO,
     COLUMNAS_PERIODO,
     PROPORCION_TEST,
     PROPORCION_VAL,
@@ -26,6 +27,11 @@ def columnas_a_descartar(columnas: pd.Index) -> list[str]:
     ]
     bloque_wise = [c for c in columnas if ("W1" in c or "W2" in c or "W3" in c)]
     return sorted(set(bloque_before) | set(bloque_wise))
+
+
+def columnas_del_modelo(columnas: pd.Index) -> list[str]:
+    """Periodo y color g-r, en un orden fijo. Si falta alguna, se omite."""
+    return [c for c in COLUMNAS_MODELO if c in columnas]
 
 
 def _columnas_log(frame: pd.DataFrame) -> list[str]:
@@ -148,9 +154,15 @@ def preparar_conjuntos(
     oids: pd.Series,
     semilla: int = SEMILLA,
 ) -> tuple[dict[str, np.ndarray | pd.Series], Preprocesador, list[str]]:
-    """Descarta columnas problemáticas, parte y ajusta el preprocesador solo en train."""
-    descartadas = columnas_a_descartar(x.columns)
-    x_sel = x.drop(columns=descartadas, errors="ignore")
+    """Descarta columnas problemáticas, se queda con periodo y color, y ajusta solo en train."""
+    malas = columnas_a_descartar(x.columns)
+    x_sel = x.drop(columns=malas, errors="ignore")
+    quedan = columnas_del_modelo(x_sel.columns)
+    if not quedan:
+        raise ValueError("No quedaron columnas de periodo o color g-r para el modelo")
+    sobran = [c for c in x_sel.columns if c not in quedan]
+    descartadas = sorted(set(malas) | set(sobran))
+    x_sel = x_sel.loc[:, quedan]
     partes = particionar(x_sel, y, oids, semilla=semilla)
     spec = especificar_transformaciones(partes["x_train"])
     periodos: dict[str, pd.Series] = {}
