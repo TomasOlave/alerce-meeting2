@@ -29,6 +29,18 @@ def test_oids_no_se_comparten_y_la_escala_sale_de_train() -> None:
     assert np.allclose(desviacion[desviacion > 0], 1, atol=1e-4)
 
 
+def test_se_puede_entrenar_con_todas_las_features_no_descartadas() -> None:
+    features, _, oids = tablas_sinteticas(n_por_clase=30, semilla=0)
+    x, oid, y = unir_features_etiquetas(features, oids)
+    solo_modelo, prep_modelo, _ = preparar_conjuntos(x, y, oid, semilla=0)
+    todas, prep_todas, descartadas = preparar_conjuntos(
+        x, y, oid, semilla=0, solo_periodo_color=False
+    )
+    assert set(prep_modelo.columnas_) < set(prep_todas.columnas_)
+    assert todas["x_train"].shape[1] == x.shape[1] - len(descartadas)
+    assert solo_modelo["oid_train"].equals(todas["oid_train"])
+
+
 def test_las_columnas_log_se_eligen_solo_con_train() -> None:
     train = pd.DataFrame({"Harmonics_mag_1_g": [0.1, 0.2, 0.3], "Period_band_r": [1.0, 2.0, 3.0]})
     test = pd.DataFrame({"Harmonics_mag_1_g": [-5.0, 0.2, 0.3], "Period_band_r": [1.0, 2.0, 4.0]})

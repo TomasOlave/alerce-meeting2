@@ -153,16 +153,22 @@ def preparar_conjuntos(
     y: pd.Series,
     oids: pd.Series,
     semilla: int = SEMILLA,
+    solo_periodo_color: bool = True,
 ) -> tuple[dict[str, np.ndarray | pd.Series], Preprocesador, list[str]]:
-    """Descarta columnas problemáticas, se queda con periodo y color, y ajusta solo en train."""
+    """Descarta columnas problemáticas, se queda con periodo y color, y ajusta solo en train.
+
+    Con `solo_periodo_color=False` entran todas las features que no se descartan.
+    """
     malas = columnas_a_descartar(x.columns)
     x_sel = x.drop(columns=malas, errors="ignore")
-    quedan = columnas_del_modelo(x_sel.columns)
-    if not quedan:
-        raise ValueError("No quedaron columnas de periodo o color g-r para el modelo")
-    sobran = [c for c in x_sel.columns if c not in quedan]
-    descartadas = sorted(set(malas) | set(sobran))
-    x_sel = x_sel.loc[:, quedan]
+    descartadas = malas
+    if solo_periodo_color:
+        quedan = columnas_del_modelo(x_sel.columns)
+        if not quedan:
+            raise ValueError("No quedaron columnas de periodo o color g-r para el modelo")
+        sobran = [c for c in x_sel.columns if c not in quedan]
+        descartadas = sorted(set(malas) | set(sobran))
+        x_sel = x_sel.loc[:, quedan]
     partes = particionar(x_sel, y, oids, semilla=semilla)
     spec = especificar_transformaciones(partes["x_train"])
     periodos: dict[str, pd.Series] = {}
