@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-from sklearn.mixture import GaussianMixture
 
+from ic_project.gmm import MezclaGaussianas
 from ic_project.modelos import CodificadorMCDSVDD, asignar_mcdsvdd, latente, puntaje_mcdsvdd
 
 
 def prototipos_gmm(
-    gmm: GaussianMixture, z: np.ndarray, oids: pd.Series, y: pd.Series, k: int = 1
+    gmm: MezclaGaussianas, z: np.ndarray, oids: pd.Series, y: pd.Series, k: int = 1
 ) -> pd.DataFrame:
     """Objetos más cercanos a cada media de componente."""
     filas = []
@@ -33,7 +33,7 @@ def prototipos_gmm(
 
 
 def outliers_gmm(
-    gmm: GaussianMixture, z: np.ndarray, oids: pd.Series, y: pd.Series, k: int = 8
+    gmm: MezclaGaussianas, z: np.ndarray, oids: pd.Series, y: pd.Series, k: int = 8
 ) -> pd.DataFrame:
     """Menor verosimilitud = más periféricos."""
     ll = gmm.score_samples(z)

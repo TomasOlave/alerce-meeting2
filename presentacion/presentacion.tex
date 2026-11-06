@@ -1,0 +1,89 @@
+\documentclass[10pt,aspectratio=169]{beamer}
+
+\usepackage{graphicx,amsmath,amssymb,tikz,psfrag,pgfgantt,booktabs,array}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.16}
+\usepgfplotslibrary{groupplots}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usetikzlibrary{positioning,fit,arrows.meta,backgrounds}
+
+\usefonttheme[onlymath]{serif}
+
+\input defs.tex
+
+%% formatting
+
+\mode<presentation>
+{
+\usetheme{default}
+}
+\setbeamertemplate{navigation symbols}{}
+\usecolortheme[rgb={0.13,0.28,0.59}]{structure}
+\setbeamertemplate{itemize subitem}{--}
+\setbeamertemplate{frametitle} {
+	\begin{flushleft}
+	  {\large\bf \insertframetitle}
+	\end{flushleft}
+}
+
+\newcommand\footlineon{
+  \setbeamertemplate{footline} {
+    \begin{beamercolorbox}[ht=2.5ex,dp=1.125ex,leftskip=.8cm,rightskip=.6cm]{structure}
+      \footnotesize \insertshorttitle
+      \hfill
+      {\insertsectionnumber.\insertframenumber}
+    \end{beamercolorbox}
+    \vskip 0.45cm
+  }
+}
+\footlineon
+
+%% ---- OPCION A: lamina azul numerada (desactivada por limite de 15 laminas) ----
+% \AtBeginSection[]{
+%   \begin{frame}[plain]
+%     \vspace*{-1.5em}
+%     \begin{center}
+%       {\Large\color{structure} \insertsectionnumber.~\insertsection}
+%     \end{center}
+%   \end{frame}
+%   \setcounter{framenumber}{0}
+% }
+
+%% ---- solo reinicia la numeracion, sin lamina divisoria ----
+\AtBeginSection[]{\setcounter{framenumber}{0}}
+
+% % ---- OPCION B: indice destacado ----
+% \AtBeginSection[]{
+%   \begin{frame}[plain]{Outline}
+%     \tableofcontents[currentsection]
+%   \end{frame}
+%   \setcounter{framenumber}{0}
+% }
+
+%% begin presentation
+
+\title[Clustering y anomalías en estrellas periódicas de ALeRCE]{Clustering y anomalías en curvas de luz de estrellas periódicas}
+
+\author[Grupo 5B]{Gabriel Fonseca \qquad Tomás Olave}
+
+\date{}
+
+\begin{document}
+
+\input{secciones/portada}
+
+% ---------- 1. Explicacion del tema: problema, motivacion, objetivos y estado del arte ----------
+\input{secciones/tema}
+
+% ---------- 2. Trabajo realizado y metodologia ----------
+\input{secciones/metodologia}
+
+% ---------- 3. Resultados preliminares ----------
+\input{secciones/resultados}
+
+% ---------- 4. Plan de trabajo hasta el final del semestre ----------
+\input{secciones/plan}
+
+\end{document}

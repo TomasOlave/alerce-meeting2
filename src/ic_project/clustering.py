@@ -10,28 +10,27 @@ from sklearn.metrics import (
     normalized_mutual_info_score,
     silhouette_score,
 )
-from sklearn.mixture import GaussianMixture
+
+from ic_project.gmm import MezclaGaussianas
 
 
 def ajustar_gmm(
     z_train: np.ndarray,
     n_componentes: int,
     semilla: int = 42,
-    covarianza: str = "full",
     n_init: int = 5,
-) -> GaussianMixture:
-    """Ajusta el GMM solo con el latente de entrenamiento."""
+    max_iter: int = 300,
+) -> MezclaGaussianas:
+    """Ajusta el GMM propio (ver gmm.py) solo con el latente de entrenamiento."""
     if n_componentes < 1:
         raise ValueError("n_componentes debe ser >= 1")
-    modelo = GaussianMixture(
+    modelo = MezclaGaussianas(
         n_components=n_componentes,
-        covariance_type=covarianza,
         random_state=semilla,
         n_init=n_init,
-        max_iter=300,
+        max_iter=max_iter,
     )
-    modelo.fit(z_train)
-    return modelo
+    return modelo.fit(z_train)
 
 
 def metricas_espacio(

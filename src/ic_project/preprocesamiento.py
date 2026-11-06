@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -12,6 +13,7 @@ from ic_project.config import (
     COLUMNAS_ARCSINH,
     COLUMNAS_MODELO,
     COLUMNAS_PERIODO,
+    FEATURES_EXCLUIDAS,
     PROPORCION_TEST,
     PROPORCION_VAL,
     SEMILLA,
@@ -32,6 +34,48 @@ def columnas_a_descartar(columnas: pd.Index) -> list[str]:
 def columnas_del_modelo(columnas: pd.Index) -> list[str]:
     """Periodo y color g-r, en un orden fijo. Si falta alguna, se omite."""
     return [c for c in COLUMNAS_MODELO if c in columnas]
+
+
+def limites_recorte(train: pd.DataFrame, recorte: tuple) -> tuple[pd.Series, pd.Series]:
+    """Límites inferior y superior de cada feature para recortar valores extremos (solo train).
+
+    ("ninguno",) | ("percentil", p): percentiles p y 100 - p | ("tukey", k): Q1 - k IQR y
+    Q3 + k IQR. Con Tukey, las features con IQR = 0 no se recortan (quedarían en un solo valor).
+    """
+    if recorte[0] == "ninguno":
+        infinito = pd.Series(np.inf, index=train.columns)
+        return -infinito, infinito
+    if recorte[0] == "percentil":
+        p = recorte[1] / 100
+        return train.quantile(p), train.quantile(1 - p)
+    if recorte[0] == "tukey":
+        q1, q3 = train.quantile(0.25), train.quantile(0.75)
+        iqr = q3 - q1
+        inf, sup = q1 - recorte[1] * iqr, q3 + recorte[1] * iqr
+        return inf.where(iqr > 0, -np.inf), sup.where(iqr > 0, np.inf)
+    raise ValueError(f"recorte desconocido: {recorte}")
+
+
+def features_a_quitar(
+    pct_nan: pd.Series, importancia: pd.Series, objetivo: int, umbral_nan: float = 8.5
+) -> list[str]:
+    """Features a quitar para quedar con `objetivo` (de las que no se descartan).
+
+    Primero salen las que tienen NaN >= umbral_nan (%) y están en la mitad menos importante;
+    después, las de menor importancia. `pct_nan` e `importancia` (por ejemplo, de un random
+    forest) tienen que calcularse solo con train y tener el mismo índice.
+    """
+    n_quitar = len(importancia) - objetivo
+    if n_quitar <= 0:
+        return []
+    de_menos_a_mas = list(importancia.sort_values(kind="stable").index)
+    puesto = importancia.rank(ascending=False)
+    primero = [
+        c for c in de_menos_a_mas if pct_nan[c] >= umbral_nan and puesto[c] > len(importancia) / 2
+    ]
+    quitar = primero[:n_quitar]
+    quitar += [c for c in de_menos_a_mas if c not in quitar][: n_quitar - len(quitar)]
+    return quitar
 
 
 def _columnas_log(frame: pd.DataFrame) -> list[str]:
@@ -154,12 +198,16 @@ def preparar_conjuntos(
     oids: pd.Series,
     semilla: int = SEMILLA,
     solo_periodo_color: bool = True,
+    excluir: Sequence[str] = FEATURES_EXCLUIDAS,
 ) -> tuple[dict[str, np.ndarray | pd.Series], Preprocesador, list[str]]:
     """Descarta columnas problemáticas, se queda con periodo y color, y ajusta solo en train.
 
-    Con `solo_periodo_color=False` entran todas las features que no se descartan.
+    Con `solo_periodo_color=False` entran todas las features que no se descartan, menos las de
+    `excluir` (por defecto FEATURES_EXCLUIDAS de config.py; pasar `excluir=()` para usarlas todas).
     """
     malas = columnas_a_descartar(x.columns)
+    if not solo_periodo_color:
+        malas = malas + [c for c in excluir if c in x.columns and c not in malas]
     x_sel = x.drop(columns=malas, errors="ignore")
     descartadas = malas
     if solo_periodo_color:

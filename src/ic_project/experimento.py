@@ -1,4 +1,4 @@
-"""Puntos 1 y 2 del meeting, y primera versión del Multi-Class Deep SVDD."""
+"""Pipeline del meeting 2: autoencoder, GMM y MCDSVDD, igual que notebooks/meeting2.ipynb."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pandas as pd
 import torch
 
 from ic_project.clustering import ajustar_gmm, metricas_espacio, tabla_cluster_clase
-from ic_project.config import RESULTADOS, SEMILLA
+from ic_project.config import EPOCAS_AE, RESULTADOS, SEMILLA, Z_DIM
 from ic_project.datos import cargar_features_y_oids, unir_features_etiquetas
 from ic_project.importancia import importancia_random_forest
 from ic_project.modelos import (
@@ -55,13 +55,15 @@ def correr_meeting2(
     *,
     raiz: Path | None = None,
     tablas: tuple[pd.DataFrame, pd.DataFrame] | None = None,
-    z_dim: int = 8,
-    epocas_ae: int = 40,
-    epocas_mcd: int = 25,
+    z_dim: int = Z_DIM,
+    epocas_ae: int = EPOCAS_AE,
+    epocas_mcd: int = 2000,
     batch: int = 128,
+    batch_mcd: int = 1024,
     semilla: int = SEMILLA,
     n_componentes: int | None = None,
     n_init_gmm: int = 5,
+    balancear_clases: bool = True,
     con_importancia: bool = True,
     directorio: Path | None = None,
     verbose: bool = True,
@@ -69,8 +71,11 @@ def correr_meeting2(
     """Entrena autoencoder, GMM y MCDSVDD. Las métricas salen del conjunto de test.
 
     `tablas` es `(features, oids)`. Si no se pasa, se leen los parquet del repo.
-    El GMM se ajusta solo con el latente de entrenamiento. UMAP/t-SNE se usa
-    únicamente para dibujar el test: no entra al modelo.
+    Entran las 158 features que no se descartan. El GMM se ajusta solo con el
+    latente de entrenamiento. MCDSVDD sigue el protocolo del paper (ver
+    `modelos.entrenar_mcdsvdd`); con `balancear_clases` usa la ecuación 5, en la
+    que cada clase pesa lo mismo. `epocas_mcd` es solo un tope: para el early
+    stopping. UMAP/t-SNE se usa únicamente para dibujar el test: no entra al modelo.
     """
     if tablas is None:
         df_features, df_oids = cargar_features_y_oids(raiz)
@@ -78,7 +83,9 @@ def correr_meeting2(
         df_features, df_oids = tablas
 
     x, oids, y = unir_features_etiquetas(df_features, df_oids)
-    conjuntos, prep, descartadas = preparar_conjuntos(x, y, oids, semilla=semilla)
+    conjuntos, prep, descartadas = preparar_conjuntos(
+        x, y, oids, semilla=semilla, solo_periodo_color=False
+    )
     y_train_i, y_val_i, y_test_i, clases = _codificar(
         conjuntos["y_train"], conjuntos["y_val"], conjuntos["y_test"]
     )
@@ -150,7 +157,11 @@ def correr_meeting2(
         salida / "gmm_clase_cluster.png",
     )
 
-    _log(verbose, "Entrenando MCDSVDD a partir del encoder...")
+    _log(
+        verbose,
+        "Entrenando MCDSVDD a partir del encoder "
+        f"({'cada clase pesa lo mismo' if balancear_clases else 'promedio simple'})...",
+    )
     mcd, hist_mcd = entrenar_mcdsvdd(
         conjuntos["x_train"],
         y_train_i,
@@ -159,8 +170,9 @@ def correr_meeting2(
         autoencoder=ae,
         z_dim=z_dim,
         n_epocas=epocas_mcd,
-        batch=batch,
+        batch=batch_mcd,
         semilla=semilla,
+        balancear_clases=balancear_clases,
     )
     z_mcd = latente(mcd, conjuntos["x_test"])
     pred_mcd_i = asignar_mcdsvdd(mcd, conjuntos["x_test"])
@@ -237,6 +249,7 @@ def correr_meeting2(
         "tamanos": tamanos,
         "clases": clases,
         "z_dim": z_dim,
+        "balancear_clases": balancear_clases,
         "mse_test_ae": mse_test,
         "epocas_ae": len(hist_ae.val),
         "epocas_mcdsvdd": len(hist_mcd.val),

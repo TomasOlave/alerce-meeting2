@@ -1,0 +1,61 @@
+% ============================================================
+% Seccion: Plan de trabajo hasta el final del semestre
+% Los porcentajes de avance son una estimacion del grupo: ajustarlos aqui
+% ============================================================
+\section{Plan de trabajo}
+
+% ============================================================
+\begin{frame}
+\frametitle{Estado de avance y plan de trabajo}
+\vspace{-0.5em}
+\begin{columns}[T]
+\begin{column}{0.42\textwidth}
+{\small \textbf{Avance por etapa}}
+\vspace{0.5em}
+
+\begin{tikzpicture}[x=1cm, y=1cm]
+  \foreach \y/\nombre/\p in {%
+      0/{1. Exploración de los datos}/100,
+      -1.0/{2. Visualización con autoencoder}/90,
+      -2.0/{3. Clustering: GMM y MCDSVDD}/80,
+      -3.0/{4. Curvas de luz y outliers}/60}{
+    \node[font=\footnotesize, anchor=west, inner sep=0pt] at (0,\y+0.32) {\nombre};
+    \fill[structure!18, rounded corners=1pt] (0,\y-0.12) rectangle (4.4,\y+0.08);
+    \fill[structure, rounded corners=1pt] (0,\y-0.12) rectangle ({4.4*\p/100},\y+0.08);
+    \node[font=\footnotesize\bfseries, text=structure, anchor=west] at (4.5,\y-0.02) {\p\,\%};
+  }
+\end{tikzpicture}
+
+\vspace{0.6em}
+{\footnotesize \textbf{Resultado esperado}: un ranking de anomalías depurado de errores de datos,
+evaluado con AUROC y respaldado con las curvas de luz.}
+\end{column}
+
+\begin{column}{0.55\textwidth}
+{\small \textbf{Próximos pasos}}
+\vspace{0.1em}
+{\footnotesize
+\begin{enumerate}\itemsep=3pt
+\item Experimento de anomalías: ocultar una clase, reentrenar y medir si el modelo la marca
+  como rara (AUROC)
+\item Filtrar períodos en alias y objetos con pocas detecciones antes de calcular el puntaje
+  de anomalía
+\item Completar la etapa 4 en MCDSVDD: pertenencia a más de un cluster y sub-clusters (ya
+  hecho para el GMM)
+\item Ajustar los hiperparámetros de MCDSVDD
+\end{enumerate}
+}
+\vspace{0.2em}
+{\small \textbf{Aristas posibles}}
+\vspace{0.1em}
+{\footnotesize
+\begin{itemize}\itemsep=2pt
+\item Autoencoder solo con período y color para el GMM: en validación el ARI sube de 0,21 a
+  0,33
+\item Latente distinto por modelo: con 32 dimensiones el GMM también llega a 0,33
+\item Entrenamiento conjunto de autoencoder y GMM, como en DAGMM
+\end{itemize}
+}
+\end{column}
+\end{columns}
+\end{frame}

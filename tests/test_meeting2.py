@@ -10,6 +10,7 @@ from ic_project.experimento import correr_meeting2
 from ic_project.preprocesamiento import (
     aplicar_transformaciones_elemento,
     especificar_transformaciones,
+    features_a_quitar,
     preparar_conjuntos,
 )
 
@@ -39,6 +40,16 @@ def test_se_puede_entrenar_con_todas_las_features_no_descartadas() -> None:
     assert set(prep_modelo.columnas_) < set(prep_todas.columnas_)
     assert todas["x_train"].shape[1] == x.shape[1] - len(descartadas)
     assert solo_modelo["oid_train"].equals(todas["oid_train"])
+
+
+def test_features_a_quitar_saca_primero_nan_alto_y_poco_importantes() -> None:
+    importancia = pd.Series({"a": 0.40, "b": 0.30, "c": 0.15, "d": 0.10, "e": 0.05})
+    pct_nan = pd.Series({"a": 12.0, "b": 1.0, "c": 1.0, "d": 9.0, "e": 1.0})
+    # "a" tiene mucho NaN pero es la mas importante: no sale. "d" sale antes que "e".
+    assert features_a_quitar(pct_nan, importancia, objetivo=4) == ["d"]
+    assert features_a_quitar(pct_nan, importancia, objetivo=3) == ["d", "e"]
+    assert features_a_quitar(pct_nan, importancia, objetivo=2) == ["d", "e", "c"]
+    assert features_a_quitar(pct_nan, importancia, objetivo=5) == []
 
 
 def test_las_columnas_log_se_eligen_solo_con_train() -> None:

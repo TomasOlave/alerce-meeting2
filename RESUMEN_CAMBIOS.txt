@@ -1,0 +1,423 @@
+RESUMEN DE CAMBIOS DEL PROYECTO
+Clustering y anomalías en curvas de luz de estrellas periódicas (EL4106, grupo 5B)
+Fecha: noviembre 2026
+
+Este documento registra todo lo que se hizo: qué quedó en el código, qué se probó y se descartó,
+con qué números se tomó cada decisión y dónde está cada cosa.
+
+Reglas que se siguieron en todas las decisiones:
+- Todo el preprocesamiento se ajusta solo con train.
+- Las configuraciones se eligen mirando VALIDACIÓN, nunca test. El test se mira al final.
+- Cuando una diferencia era chica, se repitió con varias semillas antes de decidir.
+- No se modificaron el informe ni la presentación (son entregas pasadas). No se hizo ningún commit.
+
+=====================================================================================================
+0. ESTADO FINAL (TEST)
+=====================================================================================================
+
+  Modelo     ARI     NMI     Nota
+  --------   -----   -----   ---------------------------------------------------------------
+  GMM        0.330   0.372   implementación propia, latente de 10 dimensiones, 140 features
+  DAGMM      0.023   0.085   un componente se queda con el 96% de las estrellas
+  MCDSVDD    0.775   0.724   protocolo de entrenamiento del paper
+
+  Evolución en test:
+  - GMM:     0.20 (scikit-learn, latente 8) -> 0.28 (latente 10) -> 0.33 (140 features)
+  - MCDSVDD: 0.73 (sobremuestreo, 25 épocas, latente 8) -> 0.77 (latente 10, protocolo del paper)
+             -> 0.775 (140 features)
+
+  Detección de anomalías, AUROC con el protocolo del paper (una clase escondida, 5 folds, 140 features):
+
+  Clase escondida   MCDSVDD   Autoencoder   GMM     DAGMM
+  ---------------   -------   -----------   -----   -----
+  CEP               0.860     0.624         0.495   0.548
+  DSCT              0.740     0.572         0.454   0.412
+  EB                0.812     0.734         0.609   0.650
+  LPV               0.799     0.969         0.965   0.956
+  RRL               0.827     0.436         0.445   0.391
+
+=====================================================================================================
+1. GMM
+=====================================================================================================
+
+1.1 QUÉ QUEDÓ EN EL CÓDIGO
+
+  Implementación propia del GMM, sin scikit-learn: src/ic_project/gmm.py (clase MezclaGaussianas)
+  - Covarianza completa, solo con NumPy.
+  - Inicialización: k-means++ propio (primer centro al azar; los siguientes con probabilidad
+    proporcional a la distancia al cuadrado) y luego Lloyd hasta que las asignaciones no cambian.
+    Se hacen n_init inicializaciones y se queda la de mayor log-verosimilitud.
+  - Paso E: responsabilidades gamma_nk, calculadas en logaritmos con logsumexp para no tener
+    underflow.
+  - Paso M: pesos, medias y covarianzas; se suma reg_covar (1e-6) a la diagonal.
+  - Densidad gaussiana con la descomposición de Cholesky de cada covarianza (no se invierte
+    Sigma directamente).
+  - Criterio de convergencia: el cambio de la log-verosimilitud media es menor que tol (1e-3).
+  - Expone score_samples (log-verosimilitud por estrella), predict_proba, predict, bic, aic e
+    historial_ (log-verosimilitud en cada iteración de EM).
+  - Usa los mismos nombres que sklearn.mixture.GaussianMixture (fit, means_, precisions_...), por
+    lo que el resto del código casi no cambió.
+
+  Integración:
+  - src/ic_project/clustering.py: ajustar_gmm usa MezclaGaussianas.
+  - src/ic_project/cualitativo.py: anotaciones de tipo.
+  - Notebook: secciones 3 (GMM), 11-14 (análisis cualitativo del GMM).
+
+  Validación:
+  - tests/test_gmm.py (9 pruebas): EM nunca baja la verosimilitud, recupera una mezcla conocida, el
+    BIC elige el K correcto, la verosimilitud coincide con la fórmula directa y, partiendo de los
+    mismos parámetros iniciales, da exactamente lo mismo que scikit-learn.
+  - scripts/comparar_gmm.py: con los datos reales y los mismos parámetros iniciales, la diferencia
+    con scikit-learn es de 1e-15 y converge en las mismas iteraciones (122).
+  - Con inicializaciones distintas (k-means++ propio contra KMeans de sklearn):
+      * latente de 8 dimensiones: particiones casi iguales (ARI entre ellas 0.987).
+      * latente de 10 dimensiones: llegan a óptimos locales distintos con casi la misma
+        verosimilitud (-12.6603 contra -12.6606 por objeto) pero ARI distinto (0.28 contra 0.19).
+        EM maximiza la verosimilitud, no el acuerdo con las clases.
+
+  Hiperparámetros elegidos en validación (src/ic_project/config.py):
+  - Z_DIM = 10 (latente del autoencoder). Búsqueda con 4, 6, 8, 10, 12 y 16, 3 semillas:
+
+      z_dim   ARI GMM (val)   ARI MCDSVDD (val)
+      -----   -------------   -----------------
+      4       0.217           0.749
+      6       0.217           0.777
+      8       0.215           0.788
+      10      0.272           0.800
+      12      0.226           0.788
+      16      0.208           0.785
+
+    Confirmado con 3 semillas del autoencoder x 8 del GMM: 0.264 +- 0.028 (z=10) contra
+    0.216 +- 0.018 (z=8).
+  - N_COMPONENTES_GMM = 5. Búsqueda conjunta z_dim x K: con z=10, el ARI en validación baja al
+    agregar componentes (K=5: 0.272, K=8: 0.244, K=10: 0.237, K=12: 0.218, K=15: 0.190).
+  - EPOCAS_AE = 100 (tope; el early stopping paró entre las épocas 28 y 64).
+
+1.2 PROBADO Y NO DEJADO
+
+  - GMM de scikit-learn: reemplazado por la implementación propia.
+  - K = 10 componentes (lo había puesto el usuario): con z=10 da peor ARI que K=5. Se volvió a 5.
+  - n_init = 30 en vez de 5: no mejora el promedio (0.267 contra 0.264).
+  - Exploración en un script temporal (latente de 8, test), no está en el repositorio:
+      * GMM con K = 10 y cada componente asignado a su clase mayoritaria: ARI 0.254, F1 0.556.
+      * Latente estandarizado: ARI 0.217.
+      * PCA de 8 dimensiones sobre las 158 features: ARI 0.220.
+      * Solo período y color (7 features): ARI 0.099 con K=5; 0.275 con K=20.
+      * GMM inicializado exactamente en las clases reales: ARI 0.32 antes de EM y 0.20 después.
+        EM abandona la solución alineada con las clases porque los datos se explican mejor con
+        otros grupos.
+
+1.3 CONCLUSIÓN
+
+  Sin etiquetas, las clases quedan mezcladas en el espacio latente (silhouette de las clases
+  aproximadamente 0 en todas las configuraciones). El GMM separa bien las LPV, pero agrupa al resto
+  según el período y la calidad de observación.
+
+=====================================================================================================
+2. DAGMM
+=====================================================================================================
+
+2.1 QUÉ QUEDÓ EN EL CÓDIGO
+
+  src/ic_project/dagmm.py (Zong et al. 2018):
+  - Red de compresión: el mismo autoencoder del proyecto. Al latente z_c se le agregan dos números
+    que miden la reconstrucción (distancia euclidiana relativa y similitud coseno): z = [z_c, z_r].
+  - Red de estimación: MLP (tanh, dropout 0.5, softmax) que entrega la pertenencia gamma de cada
+    estrella a cada componente. Reemplaza al paso E.
+  - GMM en PyTorch: pesos, medias y covarianzas calculados desde gamma (las mismas fórmulas del
+    paso M de gmm.py), en float64 y con Cholesky.
+  - Energía: E(z) = -log sum_k phi_k N(z | mu_k, Sigma_k).
+  - Pérdida: reconstrucción + 0.1 * energía + 0.005 * penalización de covarianzas (valores del
+    paper).
+  - Entrenamiento de punta a punta con Adam (lr 1e-4), early stopping con validación. Al final se
+    calcula la mezcla con todo train.
+  - tests/test_dagmm.py (4 pruebas): los parámetros de la mezcla coinciden con el paso M de
+    gmm.py, la energía coincide con -score_samples de gmm.py y el gradiente llega al latente.
+  - scripts/run_dagmm.py: compara DAGMM con el pipeline.
+  - Notebook, sección 4: DAGMM justo después del GMM, con la tabla GMM contra DAGMM.
+
+2.2 PROBADO Y NO DEJADO
+
+  Exploración (latente de 8, test), en un script temporal:
+
+    Configuración                         ARI     Nota
+    -----------------------------------   -----   ---------------------------------
+    lambda 0.1, desde el autoencoder      0.051
+    lambda 1, desde el autoencoder        0.065
+    lambda 10, desde el autoencoder       0.122   la reconstrucción empeora (MSE 0.58)
+    lambda 0.1, desde cero                0.068
+    lambda 1, desde cero                  0.119
+
+  Quedó la configuración del paper (lambda 0.1, desde cero). Ninguna supera al GMM.
+
+2.3 CONCLUSIÓN
+
+  DAGMM modela bien la densidad (silhouette de los grupos alto, hasta 0.64), pero mete casi todo
+  en un solo componente y no agrupa por clase. Está diseñado para detectar anomalías, no para
+  separar clases.
+
+=====================================================================================================
+3. MCDSVDD
+=====================================================================================================
+
+3.1 QUÉ QUEDÓ EN EL CÓDIGO: ENTRENAMIENTO SEGÚN EL PAPER
+
+  src/ic_project/modelos.py (entrenar_mcdsvdd, perdida_mcdsvdd), según Pérez-Carrasco et al. 2023,
+  sección 3, y su código (AnomalyALeRCE):
+
+    Aspecto                 Antes                           Ahora
+    ---------------------   -----------------------------   ------------------------------------
+    Peso de las clases      sobremuestreo hecho a mano      ecuación 5: promedio por clase,
+                                                            sumado sobre las clases
+    Weight decay lambda     1e-6                            0.5e-6
+    Batch                   128                             1024
+    Duración                25 épocas fijas                 hasta converger (paciencia 100,
+                                                            tope 2000)
+    Autoencoder             opcional                        obligatorio (preentrenado)
+
+  Sin cambios porque ya calzaban con el paper: arquitectura del encoder, centros = promedio del
+  latente por clase (fijos), puntaje = distancia al centro más cercano, Adam con lr 1e-4.
+
+  Dos diferencias entre el código del paper y su texto; se siguió el texto:
+  - el código no aplica weight decay (el texto dice lambda = 0.5e-6);
+  - el código usa un muestreo balanceado de clases en vez de la ecuación 5.
+
+  Se quitaron: la función _sobremuestrear de experimento.py y la opción --sin-sobremuestreo de
+  run_meeting2.py (ahora --sin-balancear).
+
+3.2 QUÉ QUEDÓ EN EL CÓDIGO: PROTOCOLO DE EVALUACIÓN DEL PAPER
+
+  src/ic_project/protocolo.py y scripts/run_protocolo_mcdsvdd.py (sección 4 del paper):
+  1. 80% train / 20% test (TS1), estratificado. 5 folds dentro del 80%.
+  2. Se saca una clase del entrenamiento y de la validación.
+  3. TS2 = inliers de TS1 + objetos de la clase sacada, en cantidad justa para que sean el 10%.
+  4. AUROC del puntaje de anomalía. Media y desviación sobre los 5 folds.
+  5. El autoencoder (error de reconstrucción) como referencia, igual que en la Tabla 1.
+
+  Opciones del script: --filtro detecciones | completo, --features pipeline, --con-gmm,
+  --con-dagmm. Tests en tests/test_protocolo.py.
+
+  Filtros de calidad del código del paper (filtro_detecciones, filtro_flags):
+  - detecciones: al menos 6 detecciones en g y en r -> pasan 7180 de 8419 estrellas (85%).
+  - completo: además, todas las detecciones corregidas y ninguna dudosa -> pasan 2595 (31%).
+    Es mucho más estricto con nuestros datos porque las curvas son más largas (mediana ~500
+    detecciones), así que es casi seguro que alguna salga dudosa.
+
+3.3 RESULTADOS DEL PROTOCOLO (AUROC, 158 features, para comparar con el paper)
+
+    Clase   Sin filtro   Filtro detecciones   Filtro completo   Paper
+    -----   ----------   ------------------   ---------------   -----
+    CEP     0.855        0.908                0.924             0.858
+    DSCT    0.768        0.801                0.730             0.819
+    EB      0.784        0.812                0.795             0.945
+    LPV     0.793        0.803                0.795             0.953
+    RRL     0.803        0.843                0.690             0.953
+
+  Conclusión: la implementación se ve correcta.
+  - Se reproduce el patrón del paper (MCDSVDD gana en CEP, DSCT, EB y RRL; el autoencoder en LPV).
+  - CEP coincide con el paper, y con el filtro de detecciones DSCT llega cerca.
+  - La diferencia en EB, LPV y RRL también la tiene el autoencoder simple (por ejemplo, en RRL el
+    del paper da 0.907 y el nuestro 0.41), lo que apunta a diferencias en los datos de entrada y no
+    en MCDSVDD: otro conjunto de features, escala a [0,1], un latente más grande y otra versión de
+    los datos de ALeRCE.
+
+3.4 PROBADO Y NO DEJADO
+
+  - Sobremuestreo hecho a mano: reemplazado por la ecuación 5.
+  - Filtro de calidad en el pipeline principal: el filtro queda solo como opción del protocolo.
+    En validación, filtrar solo subía las métricas porque se medía sobre estrellas más fáciles
+    (ver paso 4 del preprocesamiento).
+
+=====================================================================================================
+4. DETECCIÓN DE ANOMALÍAS
+=====================================================================================================
+
+4.1 QUÉ QUEDÓ EN EL CÓDIGO: LOS CUATRO DETECTORES CON EL PROTOCOLO
+
+  protocolo.py mide también el GMM (-log-verosimilitud sobre el latente del autoencoder) y DAGMM
+  (energía) con el mismo protocolo (tabla de la sección 0). Notebook, sección 17.
+
+  Conclusiones:
+  - MCDSVDD es el mejor en 4 de 5 clases y el único que nunca cae al azar, porque usa las clases
+    conocidas.
+  - El GMM, DAGMM y el autoencoder detectan casi perfecto una clase muy distinta (LPV: 0.96-0.97),
+    pero no las que se parecen a las conocidas (CEP, DSCT y RRL: 0.39-0.62; bajo 0.5 significa que
+    las ven más normales que las conocidas).
+  - DAGMM no mejora al GMM como detector (promedio 0.59 los dos).
+
+4.2 QUÉ QUEDÓ EN EL CÓDIGO: DETECTAR, CARACTERIZAR Y VISUALIZAR CON MCDSVDD
+
+  src/ic_project/anomalias.py, tests/test_anomalias.py (4 pruebas), notebook sección 16:
+  - Puntaje: distancia al centro más cercano.
+  - Umbral por centro: percentil 99 (PERCENTIL_ANOMALIA en config.py) de las distancias en
+    VALIDACIÓN de ese centro. Un umbral por centro porque cada clase tiene su propia dispersión.
+
+      Centro   Umbral (validación)   Umbral si se calibra con train
+      ------   -------------------   ------------------------------
+      CEP      1.351                 1.059
+      DSCT     0.970                 0.884
+      EB       1.071                 0.940
+      LPV      1.483                 0.941
+      RRL      1.030                 0.924
+
+  - Resultado en test: 17 anomalías de 1263 (1.3%).
+  - Categorías automáticas, inspiradas en la inspección visual del paper:
+      * posible error de datos (7): no pasa el filtro de detecciones o su período cae en un alias
+        de 1 día;
+      * otra clase (3): su centro más cercano no es el de su clase;
+      * candidato (7): el resto.
+  - Perfil (anomalías contra normales): mediana de detecciones 249 contra 488; sin una banda 41%
+    contra 11%; período en alias 12% contra 7%.
+  - Para cada anomalía, las 3 features en que más se aleja de su clase (en desviaciones estándar
+    de esa clase). La más repetida: GP_DRW_tau_r.
+  - Visualización: histogramas por centro con el umbral, mapa latente con las candidatas marcadas
+    por su oid, y las curvas de luz de las 17 anomalías con su categoría entre paréntesis.
+
+4.3 PROBADO Y NO DEJADO
+
+  - Umbral calibrado con train: marcaba el 3.9% del test (49 estrellas) en vez del ~1% esperado,
+    porque MCDSVDD acerca a sus centros justamente a las estrellas de train. Se cambió a validación.
+  - Umbral global "5% de test con menor puntaje" (el criterio del notebook original): lo acaparaban
+    las LPV (21% de las LPV contra menos de 4% de las otras clases). Se reemplazó por el umbral
+    por centro.
+
+4.4 OTRAS MEDICIONES (sin cambios en el código)
+
+  Con una semilla, en validación: el 15% de las estrellas no pasa el filtro de detecciones del
+  paper. Entre el 5% de estrellas más anómalas de cada detector, las que no pasan el filtro son:
+  GMM 16%, MCDSVDD 41%, autoencoder 11%. MCDSVDD marca sobre todo estrellas mal observadas.
+
+=====================================================================================================
+5. PREPROCESAMIENTO
+=====================================================================================================
+
+  Script: scripts/comparar_preprocesamiento.py --paso N (resultados en results/preprocesamiento/).
+  Cada variante: 3 semillas del autoencoder x 3 del GMM, en VALIDACIÓN. Métrica principal: ARI del
+  GMM. También F1 del random forest, ARI de MCDSVDD y diagnósticos.
+
+5.1 QUÉ QUEDÓ EN EL CÓDIGO
+
+  - 140 features: FEATURES_EXCLUIDAS en config.py (18 features), aplicadas por defecto en
+    preparar_conjuntos (con excluir=() vuelven las 158). Las 18 son las versiones en la banda r
+    de features poco importantes (Pvar, PairSlopeTrend, AndersonDarling, LinearTrend,
+    SmallKurtosis, Eta_e, StetsonK, Q31, MedianBRP, MedianAbsDev, Beyond1Std, Std, Con, Mean),
+    MHPS_PN_flag (g y r), delta_period_r y SPM_chi_r.
+  - features_a_quitar y limites_recorte en src/ic_project/preprocesamiento.py.
+  - Recorte (percentiles 1 y 99) y escala (z-score): los mismos que había; el análisis confirmó
+    que son los mejores.
+  - El protocolo de MCDSVDD sigue usando 158 features por defecto, para replicar al paper.
+
+5.2 LOS 7 PASOS PROBADOS
+
+  Paso 1 - Quitar features de observación (158 features de base):
+    base 0.272 | sin muestreo 0.210 | sin posición 0.239 | sin magnitud aparente 0.273 |
+    sin SPM y flags 0.255 | sin todos los bloques 0.234.  -> No se dejó.
+
+  Paso 2 - Imputación:
+    mediana 0.272 | KNN 0.263 | iterativa 0.245 | mediana + indicadores 0.238.
+    KNN elimina el efecto de las bandas faltantes en los sub-clusters (NMI 0.154 -> 0.031), sin
+    cambiar el GMM principal.  -> No se dejó (se mantiene la mediana).
+
+  Paso 3 - Redundancia:
+    sin redundancia |rho| > 0.9: 0.242 | > 0.8: 0.184 | bandas unificadas: 0.249 |
+    PCA 95% con whitening: 0.191 (el random forest cae a 0.798).  -> No se dejó.
+
+  Paso 4 - Filtrar estrellas como el paper:
+    base medida en todas: 0.272 | base medida en las filtradas: 0.303 | entrenada y medida en las
+    filtradas: 0.298. La mejora viene de medir sobre estrellas más fáciles, no de entrenar mejor,
+    y se pierden el 31% de las LPV y el 27% de las CEP.  -> No se dejó en el pipeline.
+
+  Paso 5 - Quitar features con mucho NaN y poca importancia:
+    140: 0.315 | 130: 0.247 | 120: 0.287 (3 semillas).
+    Confirmación con 5 semillas: base 0.262, 140: 0.284, 120: 0.261. Con 140 el NMI subió de
+    0.307 a 0.339 y mejoró en las 5 semillas.  -> SE DEJÓ 140.
+    Prueba rápida (una semilla, notebook 8.1): 158: 0.268, 140: 0.292, 120: 0.301, 50: 0.338,
+    20: 0.155.
+
+  Paso 6 - Recorte de extremos (140 features, z-score):
+
+      Recorte              % recortado   ARI     NMI
+      ------------------   -----------   -----   -----
+      sin recorte          0.0           0.299   0.321
+      percentil 1-99       1.8           0.315   0.354   <- se mantiene
+      percentil 2.5-97.5   4.6           0.298   0.348
+      percentil 5-95       9.5           0.258   0.338
+      Tukey 3 IQR          4.8           0.246   0.307
+      Tukey 1.5 IQR        7.7           0.287   0.334
+
+  Paso 7 - Escala (recorte 1-99):
+
+      Escala                 ARI     NMI
+      --------------------   -----   -----
+      z-score                0.315   0.354   <- se mantiene
+      robusta (IQR)          0.005   0.010   falla: IQR casi cero en algunas features
+      robusta (P5-P95)       0.104   0.141
+      min-max [0,1]          0.248   0.321
+      cuantiles -> normal    0.128   0.180
+      Yeo-Johnson            0.244   0.318
+
+5.3 CONCLUSIÓN
+
+  De más de 20 variantes, solo la selección de 140 features mejoró el GMM. El resto empató o
+  empeoró. Varios cambios separan más las clases en el latente (silhouette de las clases hasta
+  0.04-0.05), pero el GMM no aprovecha esa separación. El límite no está en el preprocesamiento.
+
+=====================================================================================================
+6. NOTEBOOK Y ORGANIZACIÓN
+=====================================================================================================
+
+  notebooks/meeting2.ipynb:
+  - Se borraron todos los textos de análisis. Quedan solo títulos y una celda de código por
+    sección, con los resultados explícitos y figuras combinadas (de 142 celdas a 48).
+  - Secciones actuales:
+     0 Configuración | 1 Datos y partición | 2 Autoencoder | 3 GMM | 4 DAGMM y comparación con GMM
+     5 MCDSVDD | 6 Comparación de modelos | 7 Random forest | 8 Análisis de preprocesamiento
+     (8.1 número de features, 8.2 recorte, 8.3 normalización) | 9 Importancia y datos faltantes
+     10 Curvas de luz de test | 11-14 GMM: prototipos, outliers, entre dos componentes,
+     sub-clusters | 15 MCDSVDD: prototipos | 16 MCDSVDD: anomalías (16.1 detección,
+     16.2 caracterización, 16.3 visualización) | 17 Protocolo del paper con los cuatro detectores
+  - Las secciones 8.2, 8.3 y 17 leen resultados guardados por los scripts (tardan entre 30 y 60
+    minutos). Si no existen, muestran el comando para generarlos (8.2, 8.3) o los calculan (17).
+
+  Configuración central (src/ic_project/config.py):
+    Z_DIM = 10, EPOCAS_AE = 100, N_COMPONENTES_GMM = 5, FEATURES_EXCLUIDAS (18),
+    PERCENTIL_ANOMALIA = 99.
+
+  Pruebas: de 4 a 29 (tests/test_gmm.py, test_dagmm.py, test_protocolo.py, test_anomalias.py,
+  test_meeting2.py). Todas pasan; ruff sin errores.
+
+  README.md: hiperparámetros, preprocesamiento, protocolo, cuatro detectores y resultados.
+
+  Probado y revertido:
+  - Se había cambiado presentacion/generar_figuras/figuras_presentacion.py para usar el GMM propio;
+    se revirtió porque la presentación es una entrega pasada.
+
+=====================================================================================================
+7. DÓNDE ESTÁ CADA COSA
+=====================================================================================================
+
+  Código nuevo (src/ic_project/):  gmm.py, dagmm.py, protocolo.py, anomalias.py
+  Código modificado:               modelos.py, experimento.py, clustering.py, cualitativo.py,
+                                   preprocesamiento.py, config.py
+  Scripts nuevos (scripts/):       comparar_gmm.py, run_dagmm.py, run_protocolo_mcdsvdd.py,
+                                   comparar_preprocesamiento.py
+  Resultados (results/, no se suben a git):
+    preprocesamiento/                                  tablas de los pasos 1 a 7
+    protocolo_mcdsvdd/                                 protocolo, 158 features, sin filtro
+    protocolo_mcdsvdd_filtro_detecciones/              protocolo con filtro de detecciones
+    protocolo_mcdsvdd_filtro_completo/                 protocolo con filtro completo
+    protocolo_mcdsvdd_140features_con_gmm_dagmm/       los cuatro detectores (sección 17)
+    dagmm/, comparacion_gmm.csv                        comparaciones de DAGMM y del GMM
+  Exploraciones que no quedaron en el repositorio (scripts temporales): búsquedas de z_dim y K,
+  sensibilidad a la semilla del GMM, exploración de alternativas al GMM y de DAGMM.
+
+=====================================================================================================
+8. PENDIENTE
+=====================================================================================================
+
+  - Z_DIM y N_COMPONENTES_GMM se eligieron con 158 features; conviene revisarlos con las 140.
+  - GMM por clase (un GMM por cada clase conocida): la versión con etiquetas del GMM, comparable
+    con MCDSVDD como detector de anomalías.
+  - Mejorar las categorías de anomalías: detectar períodos imposibles para la clase (por ejemplo,
+    LPV con períodos de 1 a 2 horas quedaron como candidatas).
+  - Para comparar mejor con el paper: latente más grande y escala a [0,1] en el protocolo.

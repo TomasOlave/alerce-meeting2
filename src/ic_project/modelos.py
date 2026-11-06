@@ -182,6 +182,26 @@ def entrenar_autoencoder(
     return modelo, hist
 
 
+def perdida_mcdsvdd(
+    z: torch.Tensor, y: torch.Tensor, centros: torch.Tensor, balancear_clases: bool = True
+) -> torch.Tensor:
+    """Pérdida de MCDSVDD sin el término de weight decay (ese lo aplica el optimizador).
+
+    Con `balancear_clases` es la ecuación 5 de Pérez-Carrasco et al. (2023):
+        sum_j (1 / M_j) sum_{i: y_i = j} ||z_i - c_j||^2,
+    o sea, el promedio de la distancia dentro de cada clase, sumado sobre las clases. Cada clase
+    pesa lo mismo aunque tenga menos objetos. Sin balancear es el promedio simple sobre objetos.
+    """
+    d2 = ((z - centros[y]) ** 2).sum(dim=1)
+    if not balancear_clases:
+        return d2.mean()
+    n_clases = centros.shape[0]
+    suma = torch.zeros(n_clases, dtype=d2.dtype, device=d2.device).index_add(0, y, d2)
+    conteo = torch.bincount(y, minlength=n_clases)
+    presentes = conteo > 0
+    return (suma[presentes] / conteo[presentes]).sum()
+
+
 def entrenar_mcdsvdd(
     x_train: np.ndarray,
     y_train: np.ndarray,
@@ -189,22 +209,35 @@ def entrenar_mcdsvdd(
     y_val: np.ndarray,
     autoencoder: Autoencoder | None = None,
     z_dim: int = 8,
-    n_epocas: int = 30,
+    n_epocas: int = 2000,
     lr: float = 1e-4,
-    batch: int = 128,
-    weight_decay: float = 1e-6,
-    paciencia: int = 8,
+    batch: int = 1024,
+    weight_decay: float = 0.5e-6,
+    paciencia: int = 100,
     semilla: int = 42,
+    balancear_clases: bool = True,
 ) -> tuple[CodificadorMCDSVDD, Historial]:
-    """Loss del paper: distancia al centro de la clase etiquetada. Los centros quedan fijos."""
+    """MCDSVDD con el protocolo de Pérez-Carrasco et al. (2023).
+
+    1. El encoder parte de los pesos del autoencoder ya entrenado (`autoencoder`).
+    2. Los centros son la media del latente de cada clase con esos pesos, y quedan fijos.
+    3. Se minimiza la ecuación 5 (ver `perdida_mcdsvdd`) más (lambda / 2) ||theta||^2, con
+       lambda = 0.5e-6 como en el paper (es el weight_decay de Adam).
+    4. Adam con lr 1e-4 y batch 1024, como en el código del paper. Se entrena hasta que la
+       pérdida de validación lleva `paciencia` (100) épocas sin mejorar y se devuelven los pesos
+       de la mejor época. `n_epocas` es solo un tope.
+
+    La validación tiene que tener solo clases conocidas (inliers), igual que train.
+    """
     torch.manual_seed(semilla)
     device = dispositivo()
     if int(np.min(y_train)) < 0:
         raise ValueError("y_train debe estar codificado desde 0")
+    if autoencoder is None:
+        raise ValueError("El protocolo parte de un autoencoder preentrenado: pasar `autoencoder`")
     n_clases = int(np.max(y_train)) + 1
     modelo = CodificadorMCDSVDD(x_train.shape[1], z_dim=z_dim, n_clases=n_clases).to(device)
-    if autoencoder is not None:
-        modelo.cargar_encoder(autoencoder)
+    modelo.cargar_encoder(autoencoder)
     x_all = _tensor_x(x_train).to(device)
     y_all = _tensor_y(y_train).to(device)
     modelo.inicializar_centros(x_all, y_all)
@@ -225,8 +258,7 @@ def entrenar_mcdsvdd(
             if xb.shape[0] < 2:
                 continue
             opt.zero_grad()
-            z = modelo(xb)
-            loss = torch.mean(torch.sum((z - modelo.centros[yb]) ** 2, dim=1))
+            loss = perdida_mcdsvdd(modelo(xb), yb, modelo.centros, balancear_clases)
             loss.backward()
             opt.step()
             losses.append(loss.item())
@@ -234,9 +266,8 @@ def entrenar_mcdsvdd(
             raise RuntimeError("BatchNorm necesita al menos un batch con 2 muestras")
         modelo.eval()
         with torch.no_grad():
-            z_val = modelo(x_val_t)
             val_loss = float(
-                torch.mean(torch.sum((z_val - modelo.centros[y_val_t]) ** 2, dim=1)).item()
+                perdida_mcdsvdd(modelo(x_val_t), y_val_t, modelo.centros, balancear_clases)
             )
         hist.train.append(float(np.mean(losses)))
         hist.val.append(val_loss)
