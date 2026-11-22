@@ -20,6 +20,7 @@ los objetos que quedan entre dos componentes y los sub-clusters dentro de cada c
 | `scripts/comparar_gmm.py` | Valida el GMM propio contra el de scikit-learn sobre el latente real |
 | `scripts/run_dagmm.py` | Entrena DAGMM (autoencoder y GMM juntos, `src/ic_project/dagmm.py`) y lo compara con el pipeline actual |
 | `scripts/run_protocolo_mcdsvdd.py` | Evalúa MCDSVDD con el protocolo del paper: cada clase como anomalía, AUROC en 5 folds (`src/ic_project/protocolo.py`) |
+| `scripts/run_gmm_mejorado.py` | Compara en test el GMM sin etiquetas con el GMM por clase y VaDE (ARI, NMI, F1) |
 | `scripts/comparar_preprocesamiento.py` | Compara variantes de preprocesamiento en validación (pasos 1 a 7, ver "Preprocesamiento") |
 | `tests/` | Pruebas automáticas |
 | `presentacion/` | Fuente LaTeX de la presentación y el script que genera sus figuras |
@@ -101,6 +102,39 @@ es −log-verosimilitud sobre el latente del autoencoder y el de DAGMM es su ene
 | LPV | 0.799 | 0.969 | 0.965 | 0.956 |
 | RRL | 0.827 | 0.436 | 0.445 | 0.391 |
 
+### GMM mejorado: GMM por clase y VaDE
+
+El GMM y DAGMM no usan las clases. En el latente del autoencoder las clases se pisan, así que cuando se
+esconde CEP, DSCT o RRL esas estrellas caen en zonas densas compartidas con las clases conocidas y los dos
+detectores las ven normales (AUROC bajo 0.5 en la tabla de arriba). MCDSVDD sí usa las clases y por eso
+gana. Para comparar en igualdad de condiciones se agregaron dos modelos con mezclas de gaussianas que
+también usan las clases:
+
+- **GMM por clase** (`src/ic_project/gmm_clase.py`, solo NumPy). Un GMM (`gmm.py`) por cada clase
+  conocida, con su número de componentes elegido por BIC entre 1 y `K_MAX_GMM_CLASE = 4`. Puntaje de
+  anomalía: −max_c log p(z | c), o sea, qué tan mal explica a la estrella la clase que mejor la explica.
+  Es el análogo probabilístico de MCDSVDD: en vez de la distancia euclidiana al centro más cercano usa la
+  covarianza de cada clase y puede tener más de un centro por clase. Se prueba sobre el latente del
+  autoencoder y sobre el de MCDSVDD. También clasifica (clase de máxima posterior).
+- **VaDE** (`src/ic_project/vade.py`). Autoencoder variacional cuyo prior es una mezcla de gaussianas
+  (Jiang et al. 2017). Es el modelo con GMM que trae el repositorio del paper
+  ([AnomalyALeRCE](https://github.com/mperezcarrasco/AnomalyALeRCE), `src/models/VaDE.py`), que quedó
+  incompleto: usa un atributo que no existe (`self.VaDE`), no tiene puntaje de anomalía y `build_network`
+  no lo acepta. Aquí está completo, con gamma en logaritmos (el original da 0/0 por underflow), pi con
+  softmax y el error de reconstrucción sumado sobre features. Parte del autoencoder del proyecto y de un
+  GMM sobre su latente. Hay una versión sin clases (`N_COMPONENTES_GMM` componentes) y otra con un
+  componente por clase. Puntaje: −ELBO.
+
+Los dos se miden con el mismo protocolo del paper, y ahora el protocolo guarda también el AUPRC de
+todos los detectores (al azar da 0.1, la fracción de anomalías en TS2):
+
+```bash
+uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-gmm-clase --con-vade
+uv run python scripts/run_gmm_mejorado.py   # clustering en test
+```
+
+Los resultados se ven en la sección 18 del notebook.
+
 ### Hiperparámetros
 
 Están en `src/ic_project/config.py` y los usan el notebook y los scripts. Se eligieron con el conjunto de
@@ -110,6 +144,8 @@ Están en `src/ic_project/config.py` y los usan el notebook y los scripts. Se el
 |---|---|---|
 | `Z_DIM` | 10 | Se probaron 4, 6, 8, 10, 12 y 16 con 3 semillas. Con 10, el ARI del GMM en validación fue 0.264 ± 0.028 (3 semillas del autoencoder × 8 del GMM), contra 0.216 ± 0.018 con 8, y MCDSVDD también quedó mejor (ARI 0.80 contra 0.79). |
 | `N_COMPONENTES_GMM` | 5 | Se probaron 5, 8, 10, 12 y 15 con `Z_DIM = 10`. El ARI baja al agregar componentes (0.27 con 5, 0.24 con 10). |
+| `K_MAX_GMM_CLASE` | 4 | Máximo de componentes por clase del GMM por clase; el número de cada clase lo elige BIC en train. Un K solo se prueba si la clase tiene al menos tantas estrellas como parámetros libres. |
+| `EPOCAS_VADE` | 300 | Tope; VaDE para con early stopping (paciencia 30) sobre −ELBO de validación. |
 | `EPOCAS_AE` | 100 | Es un tope. El early stopping con validación paró entre las épocas 28 y 64. |
 | `FEATURES_EXCLUIDAS` | 18 features | Ver "Preprocesamiento". Con ellas fuera quedan 140. |
 
@@ -182,8 +218,10 @@ repositorio.
 
   Verifican que no haya fuga de información entre train, val y test, que el pipeline funcione con datos
   sintéticos, que el GMM propio dé lo mismo que scikit-learn partiendo de los mismos parámetros, que la
-  pérdida de MCDSVDD sea la ecuación 5 del paper y que en el protocolo la clase anómala no se filtre al
-  entrenamiento.
+  pérdida de MCDSVDD sea la ecuación 5 del paper, que en el protocolo la clase anómala no se filtre al
+  entrenamiento, que el GMM por clase elija el número correcto de componentes y detecte una clase
+  escondida que el GMM sin etiquetas no ve, y que los términos de la ELBO de VaDE sean las KL entre
+  gaussianas.
 - **Lint.**
 
   ```bash

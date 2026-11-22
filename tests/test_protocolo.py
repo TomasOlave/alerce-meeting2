@@ -95,12 +95,23 @@ def test_protocolo_corre_de_punta_a_punta() -> None:
     x, _, y = unir_features_etiquetas(features, oids)
     resultados = correr_protocolo(
         x, y.to_numpy(), clases=["DSCT", "LPV"], n_folds=2, z_dim=3, epocas_ae=2,
-        con_gmm=True, con_dagmm=True, epocas_dagmm=2, n_epocas=3, batch=64, verbose=False,
+        con_gmm=True, con_dagmm=True, epocas_dagmm=2, con_gmm_clase=True, con_vade=True,
+        epocas_vade=2, n_epocas=3, batch=64, verbose=False,
     )
     assert len(resultados) == 4
-    for detector in ("mcdsvdd", "ae", "gmm", "dagmm"):
+    detectores = ("mcdsvdd", "ae", "gmm", "dagmm", "gmm_clase_ae", "gmm_clase_mcd", "vade",
+                  "vade_clase")
+    for detector in detectores:
         assert resultados[f"auroc_{detector}"].between(0, 1).all()
+        assert resultados[f"auprc_{detector}"].between(0, 1).all()
+    # un K por cada una de las 4 clases conocidas, como "CEP:1 EB:2 ..."
+    assert resultados["k_gmm_clase_mcd"].str.split().str.len().eq(4).all()
     resumen = resumir_protocolo(resultados)
     assert list(resumen.index) == ["DSCT", "LPV"]
-    assert {"gmm", "gmm_desv", "dagmm", "dagmm_desv"} <= set(resumen.columns)
+    assert {"gmm", "gmm_desv", "dagmm", "dagmm_desv", "gmm_clase_mcd", "vade_clase"} <= set(
+        resumen.columns
+    )
     assert resumen.loc["LPV", "paper_mcdsvdd"] == 0.953
+    resumen_auprc = resumir_protocolo(resultados, metrica="auprc")
+    assert "paper_mcdsvdd" not in resumen_auprc.columns
+    assert resumen_auprc["vade"].between(0, 1).all()

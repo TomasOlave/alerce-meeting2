@@ -14,7 +14,10 @@ usando solo lo que aprendió de las otras. Pasos:
    clase anómala del resto, y se reporta media y desviación sobre los folds. Como en la Tabla 1
    del paper, también se mide el autoencoder usando su error de reconstrucción como puntaje.
    Opcionalmente se miden con el mismo protocolo el GMM (puntaje = -log-verosimilitud sobre el
-   latente del autoencoder) y DAGMM (puntaje = energía).
+   latente del autoencoder), DAGMM (puntaje = energía), el GMM por clase (gmm_clase.py, sobre el
+   latente del autoencoder y sobre el de MCDSVDD) y VaDE (vade.py, sin clases y con clases;
+   puntaje = -ELBO). Además del AUROC se guarda el AUPRC (área bajo la curva precisión-recall,
+   que el código del paper también calcula) de cada detector.
 
 Diferencias con el paper: aquí solo hay estrellas periódicas (5 clases, sin Periodic-Other), las
 features se escalan con z-score ajustado en train (no a [0, 1]) y el latente tiene Z_DIM
@@ -29,12 +32,20 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 import torch
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import average_precision_score, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
-from ic_project.config import EPOCAS_AE, N_COMPONENTES_GMM, SEMILLA, Z_DIM
+from ic_project.config import (
+    EPOCAS_AE,
+    EPOCAS_VADE,
+    K_MAX_GMM_CLASE,
+    N_COMPONENTES_GMM,
+    SEMILLA,
+    Z_DIM,
+)
 from ic_project.dagmm import entrenar_dagmm, salidas_dagmm
 from ic_project.gmm import MezclaGaussianas
+from ic_project.gmm_clase import GMMPorClase
 from ic_project.modelos import (
     Autoencoder,
     _tensor_x,
@@ -50,6 +61,7 @@ from ic_project.preprocesamiento import (
     columnas_a_descartar,
     especificar_transformaciones,
 )
+from ic_project.vade import entrenar_vade, salidas_vade
 
 # Tabla 1 del paper, clases periódicas (su "E" es nuestra EB): AUROC (media, desviación).
 AUROC_PAPER_MCDSVDD = {
@@ -184,13 +196,22 @@ def evaluar_clase_fold(
     con_gmm: bool = False,
     con_dagmm: bool = False,
     epocas_dagmm: int = 200,
+    con_gmm_clase: bool = False,
+    con_vade: bool = False,
+    epocas_vade: int = EPOCAS_VADE,
     **kw_mcdsvdd,
 ) -> dict:
-    """Entrena sin `clase_anomala` en el fold `fold` y mide el AUROC en TS2.
+    """Entrena sin `clase_anomala` en el fold `fold` y mide el AUROC y el AUPRC en TS2.
 
     Siempre mide MCDSVDD y el autoencoder. Con `con_gmm`, también el GMM sobre el latente del
     mismo autoencoder (N_COMPONENTES_GMM componentes, no usa etiquetas). Con `con_dagmm`, también
     DAGMM entrenado desde cero con los mismos datos (como en el notebook).
+
+    Con `con_gmm_clase`, el GMM por clase (un GMM por clase conocida, K por BIC hasta
+    K_MAX_GMM_CLASE) sobre el latente del autoencoder ("gmm_clase_ae") y sobre el de MCDSVDD
+    ("gmm_clase_mcd"). Puntaje: -max_c log p(z | c).
+    Con `con_vade`, VaDE desde el mismo autoencoder: sin clases, con N_COMPONENTES_GMM
+    componentes ("vade"), y con un componente por clase conocida ("vade_clase"). Puntaje: -ELBO.
     """
     y = np.asarray(y)
     idx_tr, idx_va = particion.folds[fold]
@@ -212,25 +233,53 @@ def evaluar_clase_fold(
         datos["train"], y_tr, datos["val"], y_va, autoencoder=ae, z_dim=z_dim, semilla=semilla,
         **kw_mcdsvdd,
     )
-    fila = {
-        "clase_anomala": clase_anomala,
-        "fold": fold,
-        "auroc_mcdsvdd": float(roc_auc_score(etiqueta, puntaje_mcdsvdd(mcd, datos["ts2"]))),
-        "auroc_ae": float(roc_auc_score(etiqueta, error_reconstruccion(ae, datos["ts2"]))),
+    fila: dict = {"clase_anomala": clase_anomala, "fold": fold}
+    # puntaje de anomalía de cada detector sobre TS2 (más alto = más anómalo)
+    puntajes = {
+        "mcdsvdd": puntaje_mcdsvdd(mcd, datos["ts2"]),
+        "ae": error_reconstruccion(ae, datos["ts2"]),
     }
+    if con_gmm or con_gmm_clase:
+        z_ae_tr, z_ae_ts2 = latente(ae, datos["train"]), latente(ae, datos["ts2"])
     if con_gmm:
         gmm = MezclaGaussianas(N_COMPONENTES_GMM, n_init=5, random_state=semilla)
-        gmm.fit(latente(ae, datos["train"]))
-        puntaje = -gmm.score_samples(latente(ae, datos["ts2"]))
-        fila["auroc_gmm"] = float(roc_auc_score(etiqueta, puntaje))
+        gmm.fit(z_ae_tr)
+        puntajes["gmm"] = -gmm.score_samples(z_ae_ts2)
     if con_dagmm:
         dagmm, hist_dagmm = entrenar_dagmm(
             datos["train"], datos["val"], n_componentes=N_COMPONENTES_GMM, z_dim=z_dim,
             n_epocas=epocas_dagmm, semilla=semilla,
         )
-        puntaje = salidas_dagmm(dagmm, datos["ts2"])["energia"]
-        fila["auroc_dagmm"] = float(roc_auc_score(etiqueta, puntaje))
+        puntajes["dagmm"] = salidas_dagmm(dagmm, datos["ts2"])["energia"]
         fila["epocas_dagmm"] = len(hist_dagmm.val)
+    if con_gmm_clase:
+        por_clase_ae = GMMPorClase(K_MAX_GMM_CLASE, random_state=semilla).fit(z_ae_tr, y_tr)
+        puntajes["gmm_clase_ae"] = por_clase_ae.puntaje_anomalia(z_ae_ts2)
+        por_clase_mcd = GMMPorClase(K_MAX_GMM_CLASE, random_state=semilla)
+        por_clase_mcd.fit(latente(mcd, datos["train"]), y_tr)
+        puntajes["gmm_clase_mcd"] = por_clase_mcd.puntaje_anomalia(latente(mcd, datos["ts2"]))
+        # componentes elegidos por clase, como "CEP:2 DSCT:1 ..." (índices -> nombres)
+        for nombre, modelo in (("ae", por_clase_ae), ("mcd", por_clase_mcd)):
+            fila[f"k_gmm_clase_{nombre}"] = " ".join(
+                f"{inliers[c]}:{k}" for c, k in sorted(modelo.k_.items())
+            )
+    if con_vade:
+        vade, hist_vade = entrenar_vade(
+            datos["train"], datos["val"], ae, n_componentes=N_COMPONENTES_GMM, z_dim=z_dim,
+            n_epocas=epocas_vade, semilla=semilla,
+        )
+        puntajes["vade"] = salidas_vade(vade, datos["ts2"])["menos_elbo"]
+        vade_clase, hist_vade_clase = entrenar_vade(
+            datos["train"], datos["val"], ae, y_train=y_tr, y_val=y_va, z_dim=z_dim,
+            n_epocas=epocas_vade, semilla=semilla,
+        )
+        puntajes["vade_clase"] = salidas_vade(vade_clase, datos["ts2"])["menos_elbo"]
+        fila["epocas_vade"] = len(hist_vade.val)
+        fila["epocas_vade_clase"] = len(hist_vade_clase.val)
+    for detector, puntaje in puntajes.items():
+        fila[f"auroc_{detector}"] = float(roc_auc_score(etiqueta, puntaje))
+    for detector, puntaje in puntajes.items():
+        fila[f"auprc_{detector}"] = float(average_precision_score(etiqueta, puntaje))
     fila.update({
         "epocas_ae": len(hist_ae.val),
         "epocas_mcdsvdd": len(hist_mcd.val),
@@ -254,6 +303,9 @@ def correr_protocolo(
     con_gmm: bool = False,
     con_dagmm: bool = False,
     epocas_dagmm: int = 200,
+    con_gmm_clase: bool = False,
+    con_vade: bool = False,
+    epocas_vade: int = EPOCAS_VADE,
     **kw_mcdsvdd,
 ) -> pd.DataFrame:
     """Una fila por (clase anómala, fold). `x_crudo` son las features sin preprocesar."""
@@ -266,7 +318,8 @@ def correr_protocolo(
         for fold in range(n_folds):
             fila = evaluar_clase_fold(
                 x_crudo, y, particion, clase, fold, z_dim, epocas_ae, semilla, excluir,
-                con_gmm, con_dagmm, epocas_dagmm, **kw_mcdsvdd,
+                con_gmm, con_dagmm, epocas_dagmm, con_gmm_clase, con_vade, epocas_vade,
+                **kw_mcdsvdd,
             )
             filas.append(fila)
             if verbose:
@@ -279,16 +332,22 @@ def correr_protocolo(
     return pd.DataFrame(filas)
 
 
-def resumir_protocolo(resultados: pd.DataFrame) -> pd.DataFrame:
-    """AUROC media y desviación por clase anómala para cada detector medido, al lado de la
-    Tabla 1 del paper (que solo tiene MCDSVDD y el autoencoder)."""
+def resumir_protocolo(resultados: pd.DataFrame, metrica: str = "auroc") -> pd.DataFrame:
+    """Media y desviación por clase anómala de `metrica` ("auroc" o "auprc") para cada detector
+    medido. Al lado va la Tabla 1 del paper (AUROC, solo MCDSVDD y el autoencoder).
+
+    El AUPRC de un detector al azar es la fracción de anomalías en TS2 (0.1), no 0.5."""
+    if metrica not in ("auroc", "auprc"):
+        raise ValueError("metrica debe ser 'auroc' o 'auprc'")
     g = resultados.groupby("clase_anomala")
     tabla = pd.DataFrame(index=sorted(resultados["clase_anomala"].unique()))
-    for col in [c for c in resultados.columns if c.startswith("auroc_")]:
-        detector = col.removeprefix("auroc_")
+    for col in [c for c in resultados.columns if c.startswith(f"{metrica}_")]:
+        detector = col.removeprefix(f"{metrica}_")
         tabla[detector] = g[col].mean()
         tabla[f"{detector}_desv"] = g[col].std()
-    tabla["paper_mcdsvdd"] = [AUROC_PAPER_MCDSVDD.get(c, (np.nan, np.nan))[0] for c in tabla.index]
-    tabla["paper_ae"] = [AUROC_PAPER_AE.get(c, (np.nan, np.nan))[0] for c in tabla.index]
+    if metrica == "auroc":
+        paper_mcd = [AUROC_PAPER_MCDSVDD.get(c, (np.nan, np.nan))[0] for c in tabla.index]
+        tabla["paper_mcdsvdd"] = paper_mcd
+        tabla["paper_ae"] = [AUROC_PAPER_AE.get(c, (np.nan, np.nan))[0] for c in tabla.index]
     tabla.index.name = "clase anómala"
     return tabla
