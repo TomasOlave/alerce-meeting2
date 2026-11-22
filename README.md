@@ -133,7 +133,11 @@ uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --c
 uv run python scripts/run_gmm_mejorado.py   # clustering en test
 ```
 
-Los resultados se ven en la sección 18 del notebook.
+Resultados (detalle en `resultados_gmm_mejorado/RESULTADOS.md`, corridos con la reimplementación en
+NumPy de `scripts/sin_pytorch/`): el GMM por clase sobre el latente de MCDSVDD sube el AUROC promedio del
+GMM de 0.576 a 0.797 (MCDSVDD: 0.803), tiene el mejor AUPRC promedio (0.317) y le gana a MCDSVDD en LPV
+(0.894 contra 0.773). En clustering llega a ARI 0.772 (MCDSVDD 0.774, GMM 0.297). VaDE se comporta como el
+autoencoder (AUROC 0.660). Con PyTorch, los mismos experimentos se ven en la sección 18 del notebook.
 
 ### Hiperparámetros
 

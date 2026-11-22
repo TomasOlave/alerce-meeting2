@@ -473,12 +473,29 @@ Reglas que se siguieron en todas las decisiones:
 
   Notebook: sección 18 (18.1 protocolo con AUROC y AUPRC, 18.2 clustering).
 
-9.3 PENDIENTE
+9.3 RESULTADOS (detalle en resultados_gmm_mejorado/RESULTADOS.md)
 
-  - Correr con los datos reales (no se corrió: el entorno donde se escribió no tenía PyTorch ni los
-    parquet). Los tests de VaDE y del protocolo tampoco se corrieron; los de gmm_clase sí.
-      uv run pytest -q
-      uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-gmm-clase \
-          --con-vade
-      uv run python scripts/run_gmm_mejorado.py
-  - Si VaDE colapsa (todo en un componente, como DAGMM), probar lr 1e-4 o más paciencia.
+  Se corrieron con una reimplementación en NumPy del autoencoder, MCDSVDD y VaDE
+  (scripts/sin_pytorch/), porque la máquina no tenía PyTorch. Cuadra con los resultados de PyTorch:
+  MCDSVDD da ARI 0.774 en test (antes 0.775) y AUROC del protocolo dentro de la variación entre folds.
+
+  AUROC promedio del protocolo (140 features, 5 folds):
+    MCDSVDD 0.803 | GMM por clase sobre latente MCDSVDD 0.797 | autoencoder 0.669 | VaDE 0.660 |
+    VaDE con clases 0.660 | GMM por clase sobre latente AE 0.607 | GMM 0.576
+  AUPRC promedio (azar 0.1): GMM por clase (MCDSVDD) 0.317, el mejor; MCDSVDD 0.268.
+  El GMM por clase (MCDSVDD) le gana a MCDSVDD en LPV (0.894 contra 0.773, 5 de 5 folds), empata en
+  CEP y DSCT y pierde en EB y RRL.
+
+  Clustering en test: GMM por clase (MCDSVDD) ARI 0.772, MCDSVDD 0.774, GMM por clase (AE) 0.578,
+  VaDE con clases 0.481, GMM 0.297, VaDE 0.241.
+
+  Conclusiones: el GMM por clase sobre el latente de MCDSVDD arregla el GMM como detector (0.58 ->
+  0.80). Sobre el latente del autoencoder casi no mejora: importa el espacio, no solo las etiquetas.
+  VaDE se comporta como el autoencoder porque su -ELBO lo domina la reconstrucción.
+
+9.4 PENDIENTE
+
+  - Repetir con PyTorch (uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline
+    --con-gmm --con-gmm-clase --con-vade) para tener los números del código principal.
+  - Probar VaDE con la energía del latente como puntaje (en vez de -ELBO), que no depende de la
+    reconstrucción.
