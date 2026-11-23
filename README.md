@@ -20,6 +20,7 @@ los objetos que quedan entre dos componentes y los sub-clusters dentro de cada c
 | `scripts/comparar_gmm.py` | Valida el GMM propio contra el de scikit-learn sobre el latente real |
 | `scripts/run_dagmm.py` | Entrena DAGMM (autoencoder y GMM juntos, `src/ic_project/dagmm.py`) y lo compara con el pipeline actual |
 | `scripts/run_protocolo_mcdsvdd.py` | Evalúa MCDSVDD con el protocolo del paper: cada clase como anomalía, AUROC en 5 folds (`src/ic_project/protocolo.py`) |
+| `scripts/run_vade.py` | Entrena VaDE (el modelo con GMM del repositorio del paper) y lo compara con el GMM en test |
 | `scripts/comparar_preprocesamiento.py` | Compara variantes de preprocesamiento en validación (pasos 1 a 7, ver "Preprocesamiento") |
 | `tests/` | Pruebas automáticas |
 | `presentacion/` | Fuente LaTeX de la presentación y el script que genera sus figuras |
@@ -101,6 +102,31 @@ es −log-verosimilitud sobre el latente del autoencoder y el de DAGMM es su ene
 | LPV | 0.799 | 0.969 | 0.965 | 0.956 |
 | RRL | 0.827 | 0.436 | 0.445 | 0.391 |
 
+### VaDE: el modelo con GMM del repositorio del paper
+
+El repositorio del paper ([AnomalyALeRCE](https://github.com/mperezcarrasco/AnomalyALeRCE)) trae un solo
+modelo con mezcla de gaussianas: **VaDE** (`src/models/VaDE.py`), un autoencoder variacional cuyo espacio
+latente sigue un GMM, entrenados juntos. Allá quedó incompleto: usa un atributo que no existe
+(`self.VaDE`), no tiene puntaje de anomalía y `build_network` no lo acepta. Está completo en
+`src/ic_project/vade.py`, con su arquitectura y su pérdida (−ELBO), las pertenencias calculadas en
+logaritmos (el original da 0/0), pi con softmax y el error de reconstrucción sumado sobre features. Parte
+del autoencoder del proyecto y de un GMM (`gmm.py`) sobre su latente. Hay una versión sin clases
+(`N_COMPONENTES_GMM` componentes) y otra con un componente por clase. Puntaje de anomalía: −ELBO.
+
+Se mide con el mismo protocolo del paper, que ahora guarda también el AUPRC de todos los detectores (al
+azar da 0.1):
+
+```bash
+uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-vade
+uv run python scripts/run_vade.py   # clustering en test
+```
+
+Resultados (detalle en `resultados_vade/RESULTADOS.md`, corridos con la reimplementación en NumPy de
+`scripts/sin_pytorch/`): VaDE sube el AUROC promedio del GMM de 0.576 a 0.660, mejorando en las cinco
+clases, pero no supera al autoencoder (0.669) ni a MCDSVDD (0.803): su −ELBO lo domina el error de
+reconstrucción, así que se comporta como el autoencoder. Como clustering sin etiquetas no mejora al GMM
+(ARI 0.24 contra 0.30). Con PyTorch, los mismos experimentos se ven en la sección 18 del notebook.
+
 ### Hiperparámetros
 
 Están en `src/ic_project/config.py` y los usan el notebook y los scripts. Se eligieron con el conjunto de
@@ -110,6 +136,7 @@ Están en `src/ic_project/config.py` y los usan el notebook y los scripts. Se el
 |---|---|---|
 | `Z_DIM` | 10 | Se probaron 4, 6, 8, 10, 12 y 16 con 3 semillas. Con 10, el ARI del GMM en validación fue 0.264 ± 0.028 (3 semillas del autoencoder × 8 del GMM), contra 0.216 ± 0.018 con 8, y MCDSVDD también quedó mejor (ARI 0.80 contra 0.79). |
 | `N_COMPONENTES_GMM` | 5 | Se probaron 5, 8, 10, 12 y 15 con `Z_DIM = 10`. El ARI baja al agregar componentes (0.27 con 5, 0.24 con 10). |
+| `EPOCAS_VADE` | 300 | Tope; VaDE para con early stopping (paciencia 30) sobre −ELBO de validación. |
 | `EPOCAS_AE` | 100 | Es un tope. El early stopping con validación paró entre las épocas 28 y 64. |
 | `FEATURES_EXCLUIDAS` | 18 features | Ver "Preprocesamiento". Con ellas fuera quedan 140. |
 
@@ -182,8 +209,8 @@ repositorio.
 
   Verifican que no haya fuga de información entre train, val y test, que el pipeline funcione con datos
   sintéticos, que el GMM propio dé lo mismo que scikit-learn partiendo de los mismos parámetros, que la
-  pérdida de MCDSVDD sea la ecuación 5 del paper y que en el protocolo la clase anómala no se filtre al
-  entrenamiento.
+  pérdida de MCDSVDD sea la ecuación 5 del paper, que en el protocolo la clase anómala no se filtre al
+  entrenamiento, y que los términos de la ELBO de VaDE sean las KL entre gaussianas.
 - **Lint.**
 
   ```bash

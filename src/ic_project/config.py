@@ -31,6 +31,9 @@ EPOCAS_AE = 100
 # Z_DIM = 10 y 3 semillas): el ARI baja al agregar componentes (0.27 con 5, 0.24 con 10).
 N_COMPONENTES_GMM = 5
 
+# VaDE (vade.py): tope de épocas; el early stopping con validación decide cuándo parar.
+EPOCAS_VADE = 300
+
 # Detección de anomalías con MCDSVDD (anomalias.py): un objeto es anómalo si su distancia al
 # centro más cercano supera este percentil de las distancias de VALIDACIÓN de ese mismo centro.
 PERCENTIL_ANOMALIA = 99

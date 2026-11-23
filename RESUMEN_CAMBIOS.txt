@@ -421,3 +421,62 @@ Reglas que se siguieron en todas las decisiones:
   - Mejorar las categorías de anomalías: detectar períodos imposibles para la clase (por ejemplo,
     LPV con períodos de 1 a 2 horas quedaron como candidatas).
   - Para comparar mejor con el paper: latente más grande y escala a [0,1] en el protocolo.
+
+=====================================================================================================
+9. VaDE: EL MODELO CON GMM DEL REPOSITORIO DEL PAPER (rama feat/gmm-por-clase-vade)
+=====================================================================================================
+
+9.1 QUÉ ES Y POR QUÉ
+
+  El repositorio del paper (AnomalyALeRCE) trae un solo modelo con mezcla de gaussianas: VaDE
+  (src/models/VaDE.py), un autoencoder variacional cuyo espacio latente sigue un GMM. A diferencia del
+  GMM del pipeline (autoencoder primero, GMM después), la red y el GMM se entrenan juntos.
+
+9.2 QUÉ QUEDÓ EN EL CÓDIGO
+
+  src/ic_project/vade.py:
+  - Encoder con media y log-varianza, decoder del autoencoder, prior = mezcla de gaussianas
+    diagonales. Pérdida = -ELBO (la misma de compute_loss del repositorio del paper).
+  - Correcciones respecto al repositorio: el modelo estaba incompleto (compute_pcz usa self.VaDE, que
+    no existe; no hay puntaje de anomalía; build_network no lo acepta). Además: pertenencias en
+    logaritmos (allá exp de cada término da 0/0), pi con softmax (allá es un parámetro libre),
+    reconstrucción sumada sobre features (allá MSE promediado, que pesa 140 veces menos que la KL) y
+    decoder lineal (features en z-score).
+  - Inicialización como en el paper de VaDE: pesos del autoencoder y prior desde un GMM (gmm.py)
+    sobre su latente.
+  - Versión con clases: un componente por clase, pertenencia = clase verdadera.
+  - Puntaje de anomalía: -ELBO con z = media del encoder.
+  - tests/test_vade.py (5 pruebas): densidad gaussiana, KL contra la fórmula cerrada, posterior,
+    inicialización y entrenamiento.
+
+  Protocolo (protocolo.py, run_protocolo_mcdsvdd.py): --con-vade agrega vade y vade_clase. Ahora se
+  guarda también el AUPRC de todos los detectores (auprc_*) y resumen_auprc.csv. Al azar da 0.1.
+
+  scripts/run_vade.py: ARI, NMI, silhouette, Davies-Bouldin y F1 en test (split del meeting, 140
+  features) del GMM, VaDE y VaDE con clases.
+
+  Notebook: sección 18 (18.1 protocolo con AUROC y AUPRC, 18.2 clustering).
+
+9.3 RESULTADOS (detalle en resultados_vade/RESULTADOS.md)
+
+  Se corrieron con una reimplementación en NumPy del autoencoder, MCDSVDD y VaDE
+  (scripts/sin_pytorch/), porque la máquina no tenía PyTorch. Cuadra con los resultados de PyTorch:
+  MCDSVDD da ARI 0.774 en test (antes 0.775) y AUROC del protocolo dentro de la variación entre folds.
+
+  AUROC promedio del protocolo (140 features, 5 folds):
+    MCDSVDD 0.803 | autoencoder 0.669 | VaDE 0.660 | VaDE con clases 0.660 | GMM 0.576
+  VaDE mejora al GMM en las cinco clases (CEP 0.46 -> 0.62, DSCT 0.42 -> 0.55, EB 0.61 -> 0.73,
+  LPV 0.965 -> 0.972, RRL 0.415 -> 0.430), pero se comporta igual que el autoencoder.
+
+  Clustering en test (ARI): GMM 0.297, VaDE 0.241, VaDE con clases 0.481 (usa etiquetas).
+
+  Conclusión: el -ELBO de VaDE lo domina el error de reconstrucción (140 features sumadas), así que
+  como detector equivale al autoencoder y hereda su falla con RRL. Como clustering sin etiquetas no
+  mejora al GMM.
+
+9.4 PENDIENTE
+
+  - Repetir con PyTorch (uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline
+    --con-gmm --con-vade) para tener los números del código principal.
+  - Probar VaDE con solo la parte del GMM como puntaje (energia_latente en salidas_vade), sin la
+    reconstrucción.
