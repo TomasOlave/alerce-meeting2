@@ -14,10 +14,10 @@ usando solo lo que aprendió de las otras. Pasos:
    clase anómala del resto, y se reporta media y desviación sobre los folds. Como en la Tabla 1
    del paper, también se mide el autoencoder usando su error de reconstrucción como puntaje.
    Opcionalmente se miden con el mismo protocolo el GMM (puntaje = -log-verosimilitud sobre el
-   latente del autoencoder), DAGMM (puntaje = energía), el GMM por clase (gmm_clase.py, sobre el
-   latente del autoencoder y sobre el de MCDSVDD) y VaDE (vade.py, sin clases y con clases;
-   puntaje = -ELBO). Además del AUROC se guarda el AUPRC (área bajo la curva precisión-recall,
-   que el código del paper también calcula) de cada detector.
+   latente del autoencoder), DAGMM (puntaje = energía) y VaDE (vade.py, el modelo con GMM del
+   repositorio del paper, sin clases y con clases; puntaje = -ELBO). Además del AUROC se guarda
+   el AUPRC (área bajo la curva precisión-recall, que el código del paper también calcula) de
+   cada detector.
 
 Diferencias con el paper: aquí solo hay estrellas periódicas (5 clases, sin Periodic-Other), las
 features se escalan con z-score ajustado en train (no a [0, 1]) y el latente tiene Z_DIM
@@ -38,14 +38,12 @@ from sklearn.model_selection import StratifiedKFold, train_test_split
 from ic_project.config import (
     EPOCAS_AE,
     EPOCAS_VADE,
-    K_MAX_GMM_CLASE,
     N_COMPONENTES_GMM,
     SEMILLA,
     Z_DIM,
 )
 from ic_project.dagmm import entrenar_dagmm, salidas_dagmm
 from ic_project.gmm import MezclaGaussianas
-from ic_project.gmm_clase import GMMPorClase
 from ic_project.modelos import (
     Autoencoder,
     _tensor_x,
@@ -196,7 +194,6 @@ def evaluar_clase_fold(
     con_gmm: bool = False,
     con_dagmm: bool = False,
     epocas_dagmm: int = 200,
-    con_gmm_clase: bool = False,
     con_vade: bool = False,
     epocas_vade: int = EPOCAS_VADE,
     **kw_mcdsvdd,
@@ -207,9 +204,6 @@ def evaluar_clase_fold(
     mismo autoencoder (N_COMPONENTES_GMM componentes, no usa etiquetas). Con `con_dagmm`, también
     DAGMM entrenado desde cero con los mismos datos (como en el notebook).
 
-    Con `con_gmm_clase`, el GMM por clase (un GMM por clase conocida, K por BIC hasta
-    K_MAX_GMM_CLASE) sobre el latente del autoencoder ("gmm_clase_ae") y sobre el de MCDSVDD
-    ("gmm_clase_mcd"). Puntaje: -max_c log p(z | c).
     Con `con_vade`, VaDE desde el mismo autoencoder: sin clases, con N_COMPONENTES_GMM
     componentes ("vade"), y con un componente por clase conocida ("vade_clase"). Puntaje: -ELBO.
     """
@@ -239,12 +233,10 @@ def evaluar_clase_fold(
         "mcdsvdd": puntaje_mcdsvdd(mcd, datos["ts2"]),
         "ae": error_reconstruccion(ae, datos["ts2"]),
     }
-    if con_gmm or con_gmm_clase:
-        z_ae_tr, z_ae_ts2 = latente(ae, datos["train"]), latente(ae, datos["ts2"])
     if con_gmm:
         gmm = MezclaGaussianas(N_COMPONENTES_GMM, n_init=5, random_state=semilla)
-        gmm.fit(z_ae_tr)
-        puntajes["gmm"] = -gmm.score_samples(z_ae_ts2)
+        gmm.fit(latente(ae, datos["train"]))
+        puntajes["gmm"] = -gmm.score_samples(latente(ae, datos["ts2"]))
     if con_dagmm:
         dagmm, hist_dagmm = entrenar_dagmm(
             datos["train"], datos["val"], n_componentes=N_COMPONENTES_GMM, z_dim=z_dim,
@@ -252,17 +244,6 @@ def evaluar_clase_fold(
         )
         puntajes["dagmm"] = salidas_dagmm(dagmm, datos["ts2"])["energia"]
         fila["epocas_dagmm"] = len(hist_dagmm.val)
-    if con_gmm_clase:
-        por_clase_ae = GMMPorClase(K_MAX_GMM_CLASE, random_state=semilla).fit(z_ae_tr, y_tr)
-        puntajes["gmm_clase_ae"] = por_clase_ae.puntaje_anomalia(z_ae_ts2)
-        por_clase_mcd = GMMPorClase(K_MAX_GMM_CLASE, random_state=semilla)
-        por_clase_mcd.fit(latente(mcd, datos["train"]), y_tr)
-        puntajes["gmm_clase_mcd"] = por_clase_mcd.puntaje_anomalia(latente(mcd, datos["ts2"]))
-        # componentes elegidos por clase, como "CEP:2 DSCT:1 ..." (índices -> nombres)
-        for nombre, modelo in (("ae", por_clase_ae), ("mcd", por_clase_mcd)):
-            fila[f"k_gmm_clase_{nombre}"] = " ".join(
-                f"{inliers[c]}:{k}" for c, k in sorted(modelo.k_.items())
-            )
     if con_vade:
         vade, hist_vade = entrenar_vade(
             datos["train"], datos["val"], ae, n_componentes=N_COMPONENTES_GMM, z_dim=z_dim,
@@ -303,7 +284,6 @@ def correr_protocolo(
     con_gmm: bool = False,
     con_dagmm: bool = False,
     epocas_dagmm: int = 200,
-    con_gmm_clase: bool = False,
     con_vade: bool = False,
     epocas_vade: int = EPOCAS_VADE,
     **kw_mcdsvdd,
@@ -318,7 +298,7 @@ def correr_protocolo(
         for fold in range(n_folds):
             fila = evaluar_clase_fold(
                 x_crudo, y, particion, clase, fold, z_dim, epocas_ae, semilla, excluir,
-                con_gmm, con_dagmm, epocas_dagmm, con_gmm_clase, con_vade, epocas_vade,
+                con_gmm, con_dagmm, epocas_dagmm, con_vade, epocas_vade,
                 **kw_mcdsvdd,
             )
             filas.append(fila)

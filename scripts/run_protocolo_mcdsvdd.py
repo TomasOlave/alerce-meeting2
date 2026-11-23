@@ -8,17 +8,15 @@ Con --filtro se usan solo los objetos que pasan los criterios de calidad del có
 - completo: además, magnitudes corregidas en las dos bandas y ninguna detección dudosa.
 
 Con --con-gmm y --con-dagmm se evalúan también el GMM (-log-verosimilitud sobre el latente del
-autoencoder) y DAGMM (energía) con el mismo protocolo. Con --con-gmm-clase, el GMM por clase sobre
-el latente del autoencoder y sobre el de MCDSVDD; con --con-vade, VaDE sin clases y con clases
-(-ELBO). Con --features pipeline entran las 140
+autoencoder) y DAGMM (energía) con el mismo protocolo. Con --con-vade, VaDE (el modelo con GMM del
+repositorio del paper), sin clases y con clases (-ELBO). Con --features pipeline entran las 140
 features del pipeline en vez de las 158 (sin FEATURES_EXCLUIDAS).
 
 Uso:
     uv run python scripts/run_protocolo_mcdsvdd.py
     uv run python scripts/run_protocolo_mcdsvdd.py --filtro detecciones
     uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-dagmm
-    uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-gmm-clase \
-        --con-vade
+    uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline --con-gmm --con-vade
     uv run python scripts/run_protocolo_mcdsvdd.py --folds 2 --clases DSCT LPV
 
 Guarda en results/protocolo_mcdsvdd[...]/ el AUROC y el AUPRC de cada fold (auroc_por_fold.csv)
@@ -62,7 +60,6 @@ def main() -> None:
     parser.add_argument("--features", choices=("todas", "pipeline"), default="todas")
     parser.add_argument("--con-gmm", action="store_true")
     parser.add_argument("--con-dagmm", action="store_true")
-    parser.add_argument("--con-gmm-clase", action="store_true")
     parser.add_argument("--con-vade", action="store_true")
     parser.add_argument("--epocas-vade", type=int, default=EPOCAS_VADE)
     args = parser.parse_args()
@@ -72,7 +69,6 @@ def main() -> None:
     extras = {
         "gmm": args.con_gmm,
         "dagmm": args.con_dagmm,
-        "gmm_clase": args.con_gmm_clase,
         "vade": args.con_vade,
     }
     if any(extras.values()):
@@ -97,8 +93,8 @@ def main() -> None:
     resultados = correr_protocolo(
         x, y.to_numpy(), clases=args.clases, n_folds=args.folds, z_dim=args.z_dim,
         excluir=FEATURES_EXCLUIDAS if args.features == "pipeline" else (),
-        con_gmm=args.con_gmm, con_dagmm=args.con_dagmm, con_gmm_clase=args.con_gmm_clase,
-        con_vade=args.con_vade, epocas_vade=args.epocas_vade,
+        con_gmm=args.con_gmm, con_dagmm=args.con_dagmm, con_vade=args.con_vade,
+        epocas_vade=args.epocas_vade,
     )
     resultados.to_csv(salida / "auroc_por_fold.csv", index=False)
     resumen = resumir_protocolo(resultados)

@@ -1,5 +1,6 @@
 """Autoencoder, MCDSVDD y VaDE en NumPy (backprop a mano), con la misma arquitectura e
 hiperparámetros que src/ic_project/modelos.py y vade.py. Para correr sin PyTorch."""
+
 from __future__ import annotations
 
 import copy
@@ -38,14 +39,19 @@ class Lineal:
 
 class BN:
     def __init__(self, n, eps=1e-5, momentum=0.1):
-        self.g = np.ones(n, DT); self.b = np.zeros(n, DT)
-        self.gg = np.zeros(n, DT); self.gbb = np.zeros(n, DT)
-        self.rm = np.zeros(n, DT); self.rv = np.ones(n, DT)
-        self.eps = eps; self.mom = momentum
+        self.g = np.ones(n, DT)
+        self.b = np.zeros(n, DT)
+        self.gg = np.zeros(n, DT)
+        self.gbb = np.zeros(n, DT)
+        self.rm = np.zeros(n, DT)
+        self.rv = np.ones(n, DT)
+        self.eps = eps
+        self.mom = momentum
 
     def forward(self, x, train):
         if train:
-            mu = x.mean(axis=0); var = x.var(axis=0)
+            mu = x.mean(axis=0)
+            var = x.var(axis=0)
             n = x.shape[0]
             self.rm = (1 - self.mom) * self.rm + self.mom * mu
             self.rv = (1 - self.mom) * self.rv + self.mom * var * n / max(n - 1, 1)
@@ -120,7 +126,9 @@ class Adam:
     """Como torch.optim.Adam: weight_decay suma wd * p al gradiente."""
 
     def __init__(self, params, lr, wd=0.0, b1=0.9, b2=0.999, eps=1e-8):
-        self.ps = params; self.lr = lr; self.wd = wd
+        self.ps = params
+        self.lr = lr
+        self.wd = wd
         self.b1, self.b2, self.eps = b1, b2, eps
         self.m = [np.zeros_like(p) for p, _ in params]
         self.v = [np.zeros_like(p) for p, _ in params]
@@ -133,8 +141,9 @@ class Adam:
             norma = np.sqrt(sum(float((g.astype(np.float64) ** 2).sum()) for g in gs))
             if norma > clip:
                 gs = [g * (clip / (norma + 1e-6)) for g in gs]
-        c1 = 1 - self.b1 ** self.t; c2 = 1 - self.b2 ** self.t
-        for i, ((p, _), g) in enumerate(zip(self.ps, gs)):
+        c1 = 1 - self.b1**self.t
+        c2 = 1 - self.b2**self.t
+        for i, ((p, _), g) in enumerate(zip(self.ps, gs, strict=True)):
             self.m[i] = self.b1 * self.m[i] + (1 - self.b1) * g
             self.v[i] = self.b2 * self.v[i] + (1 - self.b2) * g * g
             p -= (self.lr * (self.m[i] / c1) / (np.sqrt(self.v[i] / c2) + self.eps)).astype(p.dtype)
@@ -143,7 +152,7 @@ class Adam:
 def lotes(n, batch, rng):
     idx = rng.permutation(n)
     for i in range(0, n, batch):
-        b = idx[i:i + batch]
+        b = idx[i : i + batch]
         if len(b) >= 2:
             yield b
 
@@ -160,15 +169,19 @@ class Historial:
 
 # ------------------------------------------------------------------ autoencoder
 
+
 class AE:
     def __init__(self, n_in, z, rng):
-        self.enc = encoder(n_in, z, rng); self.dec = decoder(z, n_in, rng)
+        self.enc = encoder(n_in, z, rng)
+        self.dec = decoder(z, n_in, rng)
 
     def params(self):
         return self.enc.params() + self.dec.params()
 
     def latente(self, x):
-        return np.concatenate([self.enc.forward(x[i:i + 4096], False) for i in range(0, len(x), 4096)])
+        return np.concatenate(
+            [self.enc.forward(x[i : i + 4096], False) for i in range(0, len(x), 4096)]
+        )
 
     def reconstruir(self, x):
         return self.dec.forward(self.latente(x), False)
@@ -176,24 +189,32 @@ class AE:
 
 def entrenar_ae(x_tr, x_va, z=10, n_epocas=100, lr=1e-3, batch=128, paciencia=8, semilla=42):
     rng = np.random.default_rng(semilla)
-    x_tr = x_tr.astype(DT); x_va = x_va.astype(DT)
+    x_tr = x_tr.astype(DT)
+    x_va = x_va.astype(DT)
     m = AE(x_tr.shape[1], z, rng)
     opt = Adam(m.params(), lr, wd=1e-5)
-    hist = Historial([], []); mejor = np.inf; espera = 0; mejor_m = _estado(m)
+    hist = Historial([], [])
+    mejor = np.inf
+    espera = 0
+    mejor_m = _estado(m)
     for _ in range(n_epocas):
         perd = []
         for b in lotes(len(x_tr), batch, rng):
             xb = x_tr[b]
-            z_ = m.enc.forward(xb, True); xr = m.dec.forward(z_, True)
+            z_ = m.enc.forward(xb, True)
+            xr = m.dec.forward(z_, True)
             d = xr - xb
-            perd.append(float((d ** 2).mean()))
+            perd.append(float((d**2).mean()))
             g = (2.0 / d.size) * d
             m.enc.backward(m.dec.backward(g))
             opt.step()
         val = float(((m.reconstruir(x_va) - x_va) ** 2).mean())
-        hist.train.append(float(np.mean(perd))); hist.val.append(val)
+        hist.train.append(float(np.mean(perd)))
+        hist.val.append(val)
         if val < mejor - 1e-5:
-            mejor = val; espera = 0; mejor_m = _estado(m)
+            mejor = val
+            espera = 0
+            mejor_m = _estado(m)
         else:
             espera += 1
             if espera >= paciencia:
@@ -206,6 +227,7 @@ def error_reconstruccion(ae, x):
 
 
 # ------------------------------------------------------------------ MCDSVDD
+
 
 class MCD:
     def __init__(self, ae: AE, x_tr, y_tr, eps=0.01):
@@ -220,7 +242,9 @@ class MCD:
         self.c = np.stack(cs).astype(DT)
 
     def latente(self, x):
-        return np.concatenate([self.enc.forward(x[i:i + 4096], False) for i in range(0, len(x), 4096)])
+        return np.concatenate(
+            [self.enc.forward(x[i : i + 4096], False) for i in range(0, len(x), 4096)]
+        )
 
     def perdida(self, z, y):
         d2 = ((z - self.c[y]) ** 2).sum(axis=1)
@@ -238,14 +262,29 @@ class MCD:
         return ((z[:, None, :] - self.c[None]) ** 2).sum(axis=2).argmin(axis=1)
 
 
-def entrenar_mcdsvdd(ae, x_tr, y_tr, x_va, y_va, n_epocas=2000, lr=1e-4, batch=1024,
-                     wd=0.5e-6, paciencia=100, semilla=42):
+def entrenar_mcdsvdd(
+    ae,
+    x_tr,
+    y_tr,
+    x_va,
+    y_va,
+    n_epocas=2000,
+    lr=1e-4,
+    batch=1024,
+    wd=0.5e-6,
+    paciencia=100,
+    semilla=42,
+):
     """Ecuación 5 del paper: sum_j (1/M_j) sum_{i en j} ||z_i - c_j||^2."""
     rng = np.random.default_rng(semilla)
-    x_tr = x_tr.astype(DT); x_va = x_va.astype(DT)
+    x_tr = x_tr.astype(DT)
+    x_va = x_va.astype(DT)
     m = MCD(ae, x_tr, y_tr)
     opt = Adam(m.enc.params(), lr, wd=wd)
-    hist = Historial([], []); mejor = np.inf; espera = 0; mejor_m = _estado(m)
+    hist = Historial([], [])
+    mejor = np.inf
+    espera = 0
+    mejor_m = _estado(m)
     for _ in range(n_epocas):
         perd = []
         for b in lotes(len(x_tr), batch, rng):
@@ -255,11 +294,15 @@ def entrenar_mcdsvdd(ae, x_tr, y_tr, x_va, y_va, n_epocas=2000, lr=1e-4, batch=1
             conteo = np.bincount(yb, minlength=len(m.c)).astype(DT)
             g = 2.0 * dif / conteo[yb][:, None]
             perd.append(m.perdida(z, yb))
-            m.enc.backward(g.astype(DT)); opt.step()
+            m.enc.backward(g.astype(DT))
+            opt.step()
         val = m.perdida(m.latente(x_va), y_va)
-        hist.train.append(float(np.mean(perd))); hist.val.append(val)
+        hist.train.append(float(np.mean(perd)))
+        hist.val.append(val)
         if val < mejor - 1e-5:
-            mejor = val; espera = 0; mejor_m = _estado(m)
+            mejor = val
+            espera = 0
+            mejor_m = _estado(m)
         else:
             espera += 1
             if espera >= paciencia:
@@ -284,15 +327,19 @@ class VaDE:
 
     def __init__(self, ae: AE, x_tr, n_comp, y_tr=None, semilla=42):
         from ic_project.gmm import MezclaGaussianas
+
         self.tronco = Seq(copy.deepcopy(ae.enc.capas[:-1]))
         ult = ae.enc.capas[-1]
         rng = np.random.default_rng(semilla)
-        self.cm = Lineal(128, ult.W.shape[1], rng); self.cm.W[...] = ult.W; self.cm.b[...] = 0
+        self.cm = Lineal(128, ult.W.shape[1], rng)
+        self.cm.W[...] = ult.W
+        self.cm.b[...] = 0
         self.cl = Lineal(128, ult.W.shape[1], rng)
         self.dec = copy.deepcopy(ae.dec)
         z = ae.latente(x_tr.astype(DT)).astype(np.float64)
         var = z.var(axis=0) + 1e-8
-        self.cl.W[...] = 0; self.cl.b[...] = np.log(0.01 * var)
+        self.cl.W[...] = 0
+        self.cl.b[...] = np.log(0.01 * var)
         if y_tr is None:
             g = MezclaGaussianas(n_comp, n_init=5, random_state=semilla).fit(z)
             pi, mu, v = g.weights_, g.means_, np.diagonal(g.covariances_, axis1=1, axis2=2)
@@ -301,13 +348,21 @@ class VaDE:
             pi = np.bincount(y_tr, minlength=n_comp) / len(y_tr)
             mu = np.stack([z[y_tr == c].mean(0) for c in range(n_comp)])
             v = np.stack([z[y_tr == c].var(0) for c in range(n_comp)])
-        self.logits = np.log(pi).astype(DT); self.mp = mu.astype(DT); self.lvp = np.log(v + 1e-6).astype(DT)
-        self.g_logits = np.zeros_like(self.logits); self.g_mp = np.zeros_like(self.mp)
+        self.logits = np.log(pi).astype(DT)
+        self.mp = mu.astype(DT)
+        self.lvp = np.log(v + 1e-6).astype(DT)
+        self.g_logits = np.zeros_like(self.logits)
+        self.g_mp = np.zeros_like(self.mp)
         self.g_lvp = np.zeros_like(self.lvp)
 
     def params(self):
-        return (self.tronco.params() + self.cm.params() + self.cl.params() + self.dec.params()
-                + [(self.logits, self.g_logits), (self.mp, self.g_mp), (self.lvp, self.g_lvp)])
+        return (
+            self.tronco.params()
+            + self.cm.params()
+            + self.cl.params()
+            + self.dec.params()
+            + [(self.logits, self.g_logits), (self.mp, self.g_mp), (self.lvp, self.g_lvp)]
+        )
 
     def log_pi(self):
         return self.logits - _logsumexp(self.logits[None], axis=1)[0]
@@ -325,7 +380,8 @@ class VaDE:
         lv = np.clip(lv_raw, LV_MIN, LV_MAX)
         if train:
             eps = rng.standard_normal(mu.shape).astype(DT)
-            sd = np.exp(0.5 * lv); z = mu + eps * sd
+            sd = np.exp(0.5 * lv)
+            z = mu + eps * sd
         else:
             z = mu
         xr = self.dec.forward(z, train)
@@ -339,9 +395,10 @@ class VaDE:
         else:
             gam = np.eye(C, dtype=DT)[y]
             klc = -log_pi[y]
-        lvp = np.clip(self.lvp, LV_MIN, LV_MAX); vp = np.exp(lvp)
+        lvp = np.clip(self.lvp, LV_MIN, LV_MAX)
+        vp = np.exp(lvp)
         dif = mu[:, None, :] - self.mp[None]
-        porc = (lvp[None] + (np.exp(lv)[:, None, :] + dif ** 2) / vp[None]).sum(axis=2)
+        porc = (lvp[None] + (np.exp(lv)[:, None, :] + dif**2) / vp[None]).sum(axis=2)
         klz = 0.5 * (gam * porc).sum(axis=1) - 0.5 * (1 + lv).sum(axis=1)
         total = rec + klz + klc
         if backward:
@@ -349,10 +406,14 @@ class VaDE:
             gxr = (2.0 / n) * (xr - x)
             gz = self.dec.backward(gxr.astype(DT))
             gmu = gz + (gam[:, :, None] * dif / vp[None]).sum(axis=1) / n
-            glv = gz * eps * sd * 0.5 + (0.5 * (gam[:, :, None] * np.exp(lv)[:, None, :] / vp[None]).sum(axis=1) - 0.5) / n
+            glv = (
+                gz * eps * sd * 0.5
+                + (0.5 * (gam[:, :, None] * np.exp(lv)[:, None, :] / vp[None]).sum(axis=1) - 0.5)
+                / n
+            )
             glv = glv * ((lv_raw > LV_MIN) & (lv_raw < LV_MAX))
             self.g_mp[...] = -(gam[:, :, None] * dif / vp[None]).sum(axis=0) / n
-            dlvp = 0.5 * gam[:, :, None] * (1 - (np.exp(lv)[:, None, :] + dif ** 2) / vp[None])
+            dlvp = 0.5 * gam[:, :, None] * (1 - (np.exp(lv)[:, None, :] + dif**2) / vp[None])
             self.g_lvp[...] = dlvp.sum(axis=0) / n * ((self.lvp > LV_MIN) & (self.lvp < LV_MAX))
             pi = np.exp(log_pi)
             self.g_logits[...] = (pi[None] - gam).sum(axis=0) / n
@@ -361,35 +422,57 @@ class VaDE:
         return total, rec, klz + klc, gam
 
     def salidas(self, x):
-        x = x.astype(DT); out = {"menos_elbo": [], "gamma": [], "z": []}
+        x = x.astype(DT)
+        out = {"menos_elbo": [], "gamma": [], "z": []}
         for i in range(0, len(x), 4096):
-            xb = x[i:i + 4096]
+            xb = x[i : i + 4096]
             tot, _, _, gam = self.paso(xb, train=False)
             h = self.tronco.forward(xb, False)
-            out["menos_elbo"].append(tot); out["gamma"].append(gam); out["z"].append(self.cm.forward(h, False))
+            out["menos_elbo"].append(tot)
+            out["gamma"].append(gam)
+            out["z"].append(self.cm.forward(h, False))
         return {k: np.concatenate(v) for k, v in out.items()}
 
 
-def entrenar_vade(ae, x_tr, x_va, n_comp=5, y_tr=None, y_va=None, n_epocas=300, lr=5e-4,
-                  batch=256, paciencia=30, semilla=42):
+def entrenar_vade(
+    ae,
+    x_tr,
+    x_va,
+    n_comp=5,
+    y_tr=None,
+    y_va=None,
+    n_epocas=300,
+    lr=5e-4,
+    batch=256,
+    paciencia=30,
+    semilla=42,
+):
     rng = np.random.default_rng(semilla)
-    x_tr = x_tr.astype(DT); x_va = x_va.astype(DT)
+    x_tr = x_tr.astype(DT)
+    x_va = x_va.astype(DT)
     m = VaDE(ae, x_tr, n_comp, y_tr, semilla)
     opt = Adam(m.params(), lr)
-    hist = Historial([], []); mejor = np.inf; espera = 0; mejor_m = _estado(m)
+    hist = Historial([], [])
+    mejor = np.inf
+    espera = 0
+    mejor_m = _estado(m)
     for _ in range(n_epocas):
         perd = []
         for b in lotes(len(x_tr), batch, rng):
             yb = None if y_tr is None else y_tr[b]
             tot, _, _, _ = m.paso(x_tr[b], yb, True, rng, backward=True)
-            opt.step(clip=5.0); perd.append(float(tot.mean()))
+            opt.step(clip=5.0)
+            perd.append(float(tot.mean()))
         tv, _, _, _ = m.paso(x_va, y_va, train=False)
         val = float(tv.mean())
-        hist.train.append(float(np.mean(perd))); hist.val.append(val)
+        hist.train.append(float(np.mean(perd)))
+        hist.val.append(val)
         if not np.isfinite(val):
             break
         if val < mejor - 1e-4:
-            mejor = val; espera = 0; mejor_m = _estado(m)
+            mejor = val
+            espera = 0
+            mejor_m = _estado(m)
         else:
             espera += 1
             if espera >= paciencia:

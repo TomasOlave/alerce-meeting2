@@ -423,79 +423,60 @@ Reglas que se siguieron en todas las decisiones:
   - Para comparar mejor con el paper: latente más grande y escala a [0,1] en el protocolo.
 
 =====================================================================================================
-9. GMM MEJORADO: GMM POR CLASE Y VaDE (rama feat/gmm-por-clase-vade)
+9. VaDE: EL MODELO CON GMM DEL REPOSITORIO DEL PAPER (rama feat/gmm-por-clase-vade)
 =====================================================================================================
 
-  Punto de partida: el pendiente "GMM por clase" de la sección 8 y el modelo con GMM del
-  repositorio del paper (AnomalyALeRCE, src/models/VaDE.py).
+9.1 QUÉ ES Y POR QUÉ
 
-9.1 POR QUÉ
-
-  El GMM y DAGMM no usan etiquetas. En el latente del autoencoder las clases se pisan, así que si se
-  esconde CEP, DSCT o RRL esas estrellas caen en zonas densas compartidas con las conocidas y quedan
-  como normales (AUROC 0.39-0.50, peor que el azar). MCDSVDD usa las clases y por eso gana: la
-  comparación no era pareja.
+  El repositorio del paper (AnomalyALeRCE) trae un solo modelo con mezcla de gaussianas: VaDE
+  (src/models/VaDE.py), un autoencoder variacional cuyo espacio latente sigue un GMM. A diferencia del
+  GMM del pipeline (autoencoder primero, GMM después), la red y el GMM se entrenan juntos.
 
 9.2 QUÉ QUEDÓ EN EL CÓDIGO
 
-  src/ic_project/gmm_clase.py (GMMPorClase, solo NumPy, reutiliza MezclaGaussianas):
-  - Un GMM por clase conocida, ajustado solo con las estrellas de esa clase.
-  - K_c elegido por BIC entre 1 y K_MAX_GMM_CLASE (4), solo con los K que tienen menos parámetros
-    libres que estrellas. Opción criterio="val" (log-verosimilitud de validación).
-  - Puntaje "max" (por defecto): -max_c log p(z | c). Puntaje "mezcla": -log sum_c pi_c p(z | c).
-  - predict: clase de máxima posterior (clasifica, comparable con MCDSVDD).
-  - tests/test_gmm_clase.py (8 pruebas, pasan): elige K=1 y K=3 en clases sintéticas, coincide con
-    el GMM de cada clase, clasifica, y detecta una clase escondida entre dos conocidas
-    (AUROC > 0.99) que un GMM sin etiquetas no ve.
-
-  src/ic_project/vade.py (VaDE, Jiang et al. 2017):
+  src/ic_project/vade.py:
   - Encoder con media y log-varianza, decoder del autoencoder, prior = mezcla de gaussianas
     diagonales. Pérdida = -ELBO (la misma de compute_loss del repositorio del paper).
-  - Correcciones respecto al repositorio: gamma en logaritmos (allá exp de cada término da 0/0),
-    pi con softmax (allá es un parámetro libre), reconstrucción sumada sobre features (allá MSE
-    promediado, que pesa 140 veces menos que la KL), decoder lineal (features en z-score), y el
-    modelo completo (allá compute_pcz usa self.VaDE, que no existe, y no hay puntaje de anomalía).
+  - Correcciones respecto al repositorio: el modelo estaba incompleto (compute_pcz usa self.VaDE, que
+    no existe; no hay puntaje de anomalía; build_network no lo acepta). Además: pertenencias en
+    logaritmos (allá exp de cada término da 0/0), pi con softmax (allá es un parámetro libre),
+    reconstrucción sumada sobre features (allá MSE promediado, que pesa 140 veces menos que la KL) y
+    decoder lineal (features en z-score).
   - Inicialización como en el paper de VaDE: pesos del autoencoder y prior desde un GMM (gmm.py)
     sobre su latente.
-  - Versión con clases: un componente por clase, gamma = clase verdadera.
-  - Puntaje: -ELBO con z = media del encoder.
+  - Versión con clases: un componente por clase, pertenencia = clase verdadera.
+  - Puntaje de anomalía: -ELBO con z = media del encoder.
   - tests/test_vade.py (5 pruebas): densidad gaussiana, KL contra la fórmula cerrada, posterior,
-    inicialización (la media del encoder es el latente del autoencoder) y entrenamiento.
+    inicialización y entrenamiento.
 
-  Protocolo (protocolo.py, run_protocolo_mcdsvdd.py):
-  - --con-gmm-clase: gmm_clase_ae y gmm_clase_mcd (sobre el latente de MCDSVDD).
-  - --con-vade: vade y vade_clase.
-  - Ahora se guarda el AUPRC de todos los detectores (auprc_*) y resumen_auprc.csv. Al azar da 0.1.
-  - k_gmm_clase_ae / k_gmm_clase_mcd: componentes elegidos por clase en cada fold.
+  Protocolo (protocolo.py, run_protocolo_mcdsvdd.py): --con-vade agrega vade y vade_clase. Ahora se
+  guarda también el AUPRC de todos los detectores (auprc_*) y resumen_auprc.csv. Al azar da 0.1.
 
-  scripts/run_gmm_mejorado.py: ARI, NMI, silhouette, Davies-Bouldin y F1 en test (split del
-  meeting, 140 features) de GMM, GMM por clase (AE y MCDSVDD), MCDSVDD, VaDE y VaDE con clases.
+  scripts/run_vade.py: ARI, NMI, silhouette, Davies-Bouldin y F1 en test (split del meeting, 140
+  features) del GMM, VaDE y VaDE con clases.
 
   Notebook: sección 18 (18.1 protocolo con AUROC y AUPRC, 18.2 clustering).
 
-9.3 RESULTADOS (detalle en resultados_gmm_mejorado/RESULTADOS.md)
+9.3 RESULTADOS (detalle en resultados_vade/RESULTADOS.md)
 
   Se corrieron con una reimplementación en NumPy del autoencoder, MCDSVDD y VaDE
   (scripts/sin_pytorch/), porque la máquina no tenía PyTorch. Cuadra con los resultados de PyTorch:
   MCDSVDD da ARI 0.774 en test (antes 0.775) y AUROC del protocolo dentro de la variación entre folds.
 
   AUROC promedio del protocolo (140 features, 5 folds):
-    MCDSVDD 0.803 | GMM por clase sobre latente MCDSVDD 0.797 | autoencoder 0.669 | VaDE 0.660 |
-    VaDE con clases 0.660 | GMM por clase sobre latente AE 0.607 | GMM 0.576
-  AUPRC promedio (azar 0.1): GMM por clase (MCDSVDD) 0.317, el mejor; MCDSVDD 0.268.
-  El GMM por clase (MCDSVDD) le gana a MCDSVDD en LPV (0.894 contra 0.773, 5 de 5 folds), empata en
-  CEP y DSCT y pierde en EB y RRL.
+    MCDSVDD 0.803 | autoencoder 0.669 | VaDE 0.660 | VaDE con clases 0.660 | GMM 0.576
+  VaDE mejora al GMM en las cinco clases (CEP 0.46 -> 0.62, DSCT 0.42 -> 0.55, EB 0.61 -> 0.73,
+  LPV 0.965 -> 0.972, RRL 0.415 -> 0.430), pero se comporta igual que el autoencoder.
 
-  Clustering en test: GMM por clase (MCDSVDD) ARI 0.772, MCDSVDD 0.774, GMM por clase (AE) 0.578,
-  VaDE con clases 0.481, GMM 0.297, VaDE 0.241.
+  Clustering en test (ARI): GMM 0.297, VaDE 0.241, VaDE con clases 0.481 (usa etiquetas).
 
-  Conclusiones: el GMM por clase sobre el latente de MCDSVDD arregla el GMM como detector (0.58 ->
-  0.80). Sobre el latente del autoencoder casi no mejora: importa el espacio, no solo las etiquetas.
-  VaDE se comporta como el autoencoder porque su -ELBO lo domina la reconstrucción.
+  Conclusión: el -ELBO de VaDE lo domina el error de reconstrucción (140 features sumadas), así que
+  como detector equivale al autoencoder y hereda su falla con RRL. Como clustering sin etiquetas no
+  mejora al GMM.
 
 9.4 PENDIENTE
 
   - Repetir con PyTorch (uv run python scripts/run_protocolo_mcdsvdd.py --features pipeline
-    --con-gmm --con-gmm-clase --con-vade) para tener los números del código principal.
-  - Probar VaDE con la energía del latente como puntaje (en vez de -ELBO), que no depende de la
+    --con-gmm --con-vade) para tener los números del código principal.
+  - Probar VaDE con solo la parte del GMM como puntaje (energia_latente en salidas_vade), sin la
     reconstrucción.

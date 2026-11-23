@@ -31,10 +31,6 @@ EPOCAS_AE = 100
 # Z_DIM = 10 y 3 semillas): el ARI baja al agregar componentes (0.27 con 5, 0.24 con 10).
 N_COMPONENTES_GMM = 5
 
-# GMM por clase (gmm_clase.py): cada clase conocida tiene su propio GMM y su número de componentes
-# se elige con BIC entre 1 y K_MAX_GMM_CLASE.
-K_MAX_GMM_CLASE = 4
-
 # VaDE (vade.py): tope de épocas; el early stopping con validación decide cuándo parar.
 EPOCAS_VADE = 300
 
